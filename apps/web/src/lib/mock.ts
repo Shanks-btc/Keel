@@ -252,14 +252,14 @@ export const mockAgentState: AgentState = {
     {
       id: "pt-002",
       type: "SwapExecution",
-      label: "USDT → ETH",
+      label: "First qualifying BSC swap",
       timestamp: isoAt(8),
       txHash:
-        "0xabc123def456789abcdef0123456789abcdef0123456789abcdef0123456789ab",
+        "0x99ef6856cd679a65a7d7877b97bd5a4f525b98b0b61a2589481f2a108e6d9854",
       explorerUrl:
-        "https://bscscan.com/tx/0xabc123def456789abcdef0123456789abcdef0123456789abcdef0123456789ab",
+        "https://bscscan.com/tx/0x99ef6856cd679a65a7d7877b97bd5a4f525b98b0b61a2589481f2a108e6d9854",
       verified: true,
-      detail: "120 USDT → 0.06982 ETH via LiquidMesh, impact 0.01%",
+      detail: "minimum-risk qualifying attempt · BSC only · not Base/x402",
     },
     {
       id: "pt-003",
@@ -272,10 +272,14 @@ export const mockAgentState: AgentState = {
     {
       id: "pt-004",
       type: "AgentIdentity",
-      label: "Agent Identity",
+      label: "Agent Identity — Registered",
       timestamp: isoAt(1440),
-      verified: false,
-      detail: "Pending registration — fund-gated",
+      txHash:
+        "0x006151e42ceb1b151ddcd7b172b9dd2087cbabbe7fbe3a58c63274c3fa6ac305",
+      explorerUrl:
+        "https://bscscan.com/tx/0x006151e42ceb1b151ddcd7b172b9dd2087cbabbe7fbe3a58c63274c3fa6ac305",
+      verified: true,
+      detail: "0x66af72374Eb358cf939bc1954b8F62EfcF08E10a registered on BSC",
     },
     {
       id: "pt-005",

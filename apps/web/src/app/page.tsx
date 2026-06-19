@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { mockAgentState } from "../lib/mock";
+import type { AgentPersistentState, AuditEntry } from "@keel/shared";
 import { AppShell } from "../components/AppShell";
 import { TopTradingBar } from "../components/TopTradingBar";
 import { TradingSummaryRow } from "../components/TradingSummaryRow";
@@ -21,14 +22,86 @@ import { X402ConfirmationCard } from "../components/X402ConfirmationCard";
 import { SwapDecisionLogTable } from "../components/SwapDecisionLogTable";
 import { SystemHealthCard } from "../components/SystemHealthCard";
 import { AgentControls } from "../components/AgentControls";
+import { AgentWalletProofCard } from "../components/AgentWalletProofCard";
+import { SchedulerStatusCard } from "../components/SchedulerStatusCard";
+
+interface AgentStateResponse {
+  ok: boolean;
+  state: AgentPersistentState | null;
+  lastAuditEntry: AuditEntry | null;
+  totalCycles: number;
+}
+
+// Today's ISO date key (client timezone)
+function getTodayKey(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// Simulation notice banner — shown on cards whose data is not yet live
+function SimBanner() {
+  return (
+    <div
+      style={{
+        gridColumn: "span 4",
+        fontSize: "11px",
+        color: "var(--amber)",
+        background: "var(--amber)08",
+        border: "1px solid var(--amber)25",
+        borderRadius: "6px",
+        padding: "8px 14px",
+        lineHeight: "1.5",
+      }}
+    >
+      <strong>SIMULATION</strong> — portfolio values, holdings balances, swap history, and
+      market signals in this dashboard use simulated data (real portfolio query requires TWAK;
+      real prices require CMC API on the server). Real data:{" "}
+      <strong>Agent Wallet Proof</strong>, <strong>Scheduler Status</strong>, and{" "}
+      <strong>Risk-Gated Preview</strong> (when the scheduler has run).
+    </div>
+  );
+}
 
 export default function DashboardPage() {
   const [paused, setPaused] = useState(false);
+  const [agentData, setAgentData] = useState<AgentStateResponse | null>(null);
+  const [loadingState, setLoadingState] = useState(true);
+  const todayKey = getTodayKey();
 
+  const fetchAgentState = useCallback(async () => {
+    setLoadingState(true);
+    try {
+      const res = await fetch("/api/agent-state");
+      if (res.ok) {
+        setAgentData((await res.json()) as AgentStateResponse);
+      }
+    } catch {
+      // API unavailable — keep mock data
+    } finally {
+      setLoadingState(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchAgentState();
+  }, [fetchAgentState]);
+
+  // Base state from mock; real status overlaid
   const state = {
     ...mockAgentState,
     status: paused ? ("Paused" as const) : ("Running" as const),
+    // Override HWM from real persistence when available
+    drawdown: {
+      ...mockAgentState.drawdown,
+      highWaterMarkUsd:
+        agentData?.state?.highWaterMarkUsd && agentData.state.highWaterMarkUsd > 0
+          ? agentData.state.highWaterMarkUsd
+          : mockAgentState.drawdown.highWaterMarkUsd,
+    },
   };
+
+  // Last qualifying tx from audit log
+  const lastQualifyingTxHash =
+    agentData?.lastAuditEntry?.txHash ?? null;
 
   return (
     <AppShell>
@@ -41,7 +114,7 @@ export default function DashboardPage() {
         paused={paused}
         onPause={() => setPaused(true)}
         onResume={() => setPaused(false)}
-        onRefresh={() => {}}
+        onRefresh={() => void fetchAgentState()}
       />
 
       {/* 2 — Trading summary row */}
@@ -56,6 +129,9 @@ export default function DashboardPage() {
           gap: "12px",
         }}
       >
+        {/* Simulation notice */}
+        <SimBanner />
+
         {/* Row A: Portfolio Value (2-wide), PnL, Exposure */}
         <div style={{ gridColumn: "span 2" }}>
           <PortfolioValueCard data={state.portfolioValue} />
@@ -91,14 +167,26 @@ export default function DashboardPage() {
         </div>
         <X402ConfirmationCard data={state.x402} />
         <SystemHealthCard data={state.systemHealth} />
+
+        {/* Row F (§7): Agent Wallet Proof (2-wide) + Scheduler Status (2-wide) */}
+        <div style={{ gridColumn: "span 2" }}>
+          <AgentWalletProofCard lastQualifyingTxHash={lastQualifyingTxHash} />
+        </div>
+        <div style={{ gridColumn: "span 2" }}>
+          <SchedulerStatusCard
+            state={agentData?.state ?? null}
+            todayKey={todayKey}
+            isLoading={loadingState}
+          />
+        </div>
       </div>
 
-      {/* 4 — Bottom: Swap / Decision Log + Agent Controls */}
+      {/* 4 — Bottom: Swap / Decision Log + Risk-Gated Agent Controls (§7b) */}
       <div
         style={{
           padding: "0 24px 40px",
           display: "grid",
-          gridTemplateColumns: "1fr 320px",
+          gridTemplateColumns: "1fr 360px",
           gap: "12px",
         }}
       >
@@ -107,7 +195,7 @@ export default function DashboardPage() {
           status={state.status}
           onPause={() => setPaused(true)}
           onResume={() => setPaused(false)}
-          onRefresh={() => {}}
+          onRefresh={() => void fetchAgentState()}
         />
       </div>
     </AppShell>

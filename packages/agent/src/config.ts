@@ -32,4 +32,21 @@ export const DEFAULT_POLICY: PolicyConfig = {
 
   // Anti-churn
   rebalanceBandPct: 5,        // only rebalance if deviation from target > 5%
+
+  // Daily qualification scheduler
+  fallbackSwapSizeUsd: 2,     // minimum drawdown-neutral fallback stable-to-stable swap
+
+  // Post-formula overlay thresholds (drawdown + Hub enrichments)
+  drawdownOverlayStartPct: -8,       // overlay kicks in below -8% from HWM
+  drawdownOverlayCap: 45,            // cap at neutral target while in overlay zone
+  emergencyModeThresholdPct: -14,    // emergency mode (only de-risk) below -14%
+
+  macroEventWindowHours: 24,         // pre-emptive de-risk window before macro event
+  macroEventTargetCap: 30,           // volatile % cap inside the event window
+
+  rsiCautionThreshold: 75,           // RSI above 75 triggers TA-caution overlay
+  rsiCautionTargetCap: 45,           // volatile % cap when RSI is in caution zone
+
+  btcDominanceRiskOffThreshold: 55,  // BTC dominance above 55% signals risk-off regime
+  btcDominanceTargetCap: 45,         // volatile % cap in risk-off regime
 };

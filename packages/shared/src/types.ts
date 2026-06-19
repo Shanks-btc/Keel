@@ -230,6 +230,28 @@ export interface PolicyConfig {
 
   // Anti-churn
   rebalanceBandPct: number;    // default 5    — only rebalance if deviation > this
+
+  // Daily qualification scheduler — fallback stable-to-stable swap minimum size
+  fallbackSwapSizeUsd: number; // default 2    — minimum drawdown-neutral fallback swap
+
+  // ── Post-formula overlay thresholds (drawdown + Hub enrichments) ───────────
+  // These are additive clamps on the engine's output — they can only lower
+  // the volatile target, never raise it. The engine formula is untouched.
+  drawdownOverlayStartPct: number;       // default -8   — overlay kicks in below this (< 0)
+  drawdownOverlayCap: number;            // default 45   — max volatile % in overlay zone
+  emergencyModeThresholdPct: number;     // default -14  — emergency: only de-risk allowed
+
+  // Hub enrichment overlay caps (get_upcoming_macro_events)
+  macroEventWindowHours: number;         // default 24   — pre-event de-risk window (hours)
+  macroEventTargetCap: number;           // default 30   — volatile % cap inside window
+
+  // Hub enrichment overlay caps (get_crypto_technical_analysis)
+  rsiCautionThreshold: number;           // default 75   — RSI above this triggers caution
+  rsiCautionTargetCap: number;           // default 45   — volatile % cap when RSI is high
+
+  // Hub enrichment overlay caps (get_global_metrics_latest)
+  btcDominanceRiskOffThreshold: number;  // default 55   — BTC dom % above this = risk-off regime
+  btcDominanceTargetCap: number;         // default 45   — volatile % cap in risk-off regime
 }
 
 // ── Guardrail check result ────────────────────────────────────────────────────
@@ -317,6 +339,142 @@ export interface CycleResult {
   guardrailResults: GuardrailResult[];
   killSwitchResult: KillSwitchResult;
   reason: string;
+}
+
+// ── Hub enrichment signals (best-effort — all optional) ──────────────────────
+// Numeric inputs from the CMC Agent Hub; each is skipped silently when absent.
+
+export interface HubSignals {
+  rsi?: number;                    // from get_crypto_technical_analysis
+  hoursToNextMacroEvent?: number;  // from get_upcoming_macro_events
+  btcDominancePct?: number;        // from get_global_metrics_latest
+}
+
+// ── Hub attempt record (per-cycle observability) ──────────────────────────────
+// Present only when HUB_ENABLED=yes. Each field is "ok" or the error message
+// returned by that tool call. Allows post-hoc diagnosis of Hub outages.
+
+export interface HubAttempt {
+  price:  string;   // "ok" | error message
+  ta:     string;   // "ok" | error message
+  macro:  string;   // "ok" | error message
+  btcDom: string;   // "ok" | error message
+}
+
+// ── Overlay input (engine output + context for post-formula clamps) ───────────
+
+export interface OverlayInput {
+  modeTarget: number;   // volatile target % from engine: 80 | 45 | 18
+  drawdownPct: number;  // current drawdown from HWM (negative, e.g. -10)
+  hub?: HubSignals;     // best-effort Hub enrichment signals (skipped when absent)
+}
+
+// ── One applied overlay (an entry in the per-cycle audit trail) ───────────────
+
+export interface AppliedOverlay {
+  name: string;            // "drawdown" | "emergency" | "macro-event" | "ta-caution" | "regime-bias"
+  originalTarget: number;  // volatile target % before this overlay (always ≥ adjustedTarget)
+  adjustedTarget: number;  // volatile target % after this overlay
+  reason: string;
+}
+
+// ── Overlay stack result ──────────────────────────────────────────────────────
+
+export interface OverlayResult {
+  finalTarget: number;               // clamped volatile target % to use in cycle decisions
+  overlaysApplied: AppliedOverlay[];
+  emergencyMode: boolean;            // true when near kill-switch; only de-risk allowed
+}
+
+// ── Signals result (per-cycle output of Hub + REST aggregation) ──────────────
+
+export interface SignalsResult {
+  snapshot: MarketSnapshot;       // price/1h/24h/fearGreed — price may come from Hub or REST
+  hub: HubSignals;                // Hub enrichment signals (empty when Hub disabled or failed)
+  priceSource: "hub" | "rest";   // which source provided price data this cycle
+  hubConnected: boolean;          // whether the Hub responded successfully this cycle
+  hubAttempt?: HubAttempt;        // per-tool status when HUB_ENABLED=yes; absent otherwise
+}
+
+// ── x402 payment proof (Base chain — STRICTLY SEPARATE from BSC trade proof) ─
+// Settlement is always USDC on Base (Chain ID 8453). Never conflate with BSC.
+
+export interface X402PaymentProof {
+  txHash: string;       // Base transaction hash (NOT a BSC hash)
+  chain: "Base";        // always Base for x402 settlement
+  chainId: number;      // 8453 (Base)
+  amountUsdc: number;   // amount paid (e.g. 0.01)
+  settledAt: string;    // ISO-8601
+  url: string;          // the paid endpoint URL
+  explorerUrl: string;  // https://basescan.org/tx/<txHash>
+}
+
+// ── Scheduler action (per-day outcome of the daily qualification scheduler) ────
+
+export type SchedulerAction =
+  | "EXECUTED"           // normal trade executed (normal cycle or risk-reducing rebalance)
+  | "FALLBACK_EXECUTED"  // drawdown-neutral fallback qualification attempt (stable-to-stable)
+  | "KILL_SWITCH"        // kill-switch triggered; volatile→stable flattening executed
+  | "BLOCKED"            // all paths blocked; see blockedReason
+  | "SKIPPED";           // already executed today (idempotent re-invocation)
+
+// ── Day ledger entry (one record per calendar date) ───────────────────────────
+
+export interface DayAttemptEntry {
+  date: string;               // ISO date key "2026-06-19"
+  status: "EXECUTED" | "BLOCKED" | "SKIPPED";
+  action?: SchedulerAction;   // specific scheduler action
+  txHash?: string;            // BSC tx hash when EXECUTED or KILL_SWITCH
+  blockedReason?: string;     // human-readable reason when BLOCKED
+  timestamp: string;          // ISO-8601 of attempt
+}
+
+// ── Persisted agent state (survives process restarts) ─────────────────────────
+
+export interface AgentPersistentState {
+  highWaterMarkUsd: number;
+  dailyLossStartUsd: number;  // portfolio value at start of the current trading day
+  dayLedger: Record<string, DayAttemptEntry>; // dateKey → attempt entry
+  lastUpdated: string;        // ISO-8601
+}
+
+// ── Projected-drawdown gate result (§4 asymmetric pre-execution check) ────────
+// Asymmetric: risk-reducing (volatile→stable) always passes.
+// Risk-increasing (stable→volatile) is blocked in overlay/emergency zones.
+
+export interface DrawdownGateResult {
+  ok: boolean;
+  guardName: "projected-drawdown";
+  reason: string;
+  projectedVolatilePct?: number;  // computed for risk-increasing trades only
+  isRiskReducing: boolean;
+}
+
+// ── Audit log entry (one per scheduler cycle) ─────────────────────────────────
+// Full per-cycle record: signals → overlays → risk → gate → action → proof.
+// BSC trade hashes and Base x402 proofs are in separate, named fields.
+
+export interface AuditEntry {
+  cycleId: string;                     // ISO-8601 cycle start time (unique run ID)
+  date: string;                        // "2026-06-19"
+  priceSource: "hub" | "rest";         // which source provided price data this cycle
+  hubConnected: boolean;
+  hubSignals: HubSignals;              // Hub enrichment (empty when Hub disabled or failed)
+  overlaysApplied: AppliedOverlay[];   // overlays that clamped the target this cycle
+  emergencyMode: boolean;
+  riskScore: RiskScore;
+  mode: RiskMode;
+  adjustedTargetPct: number;           // final volatile target after all overlays
+  proposal: TradeProposal | null;      // trade proposal (null when HOLD)
+  drawdownGate: DrawdownGateResult | null; // projected-drawdown gate result
+  guardrailResults: GuardrailResult[]; // existing gate chain results
+  killSwitchTriggered: boolean;
+  action: SchedulerAction;
+  txHash?: string;                     // BSC tx hash (NEVER a Base/x402 hash)
+  x402Proof?: X402PaymentProof;        // Base payment proof — strictly separate from BSC
+  blockedReason?: string;
+  dryRun?: boolean;                    // true when produced by a dry-run cycle; no funds moved
+  hubAttempt?: HubAttempt;             // per-tool Hub status when HUB_ENABLED=yes; absent otherwise
 }
 
 // ── Agent state (top-level for the dashboard) ─────────────────────────────────

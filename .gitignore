@@ -9,3 +9,4 @@ build/
 out/
 .turbo/
 *.tsbuildinfo
+data/

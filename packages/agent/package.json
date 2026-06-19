@@ -7,7 +7,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "run:cycle": "tsx src/runner.ts",
+    "cycle:dry": "tsx src/runner.ts --dry-run"
   },
   "dependencies": {
     "@keel/shared": "*"
