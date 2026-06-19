@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@keel/shared": ["../shared/src/index.ts"],
+      "@keel/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src", "tests"]
+}
