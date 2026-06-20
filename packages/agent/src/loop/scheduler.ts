@@ -55,6 +55,9 @@ import { appendAuditEntry as fileAppendAudit } from "../state/audit.js";
 const FALLBACK_FROM = "USDT" as const;
 const FALLBACK_TO = "USDC" as const;
 
+// Stable asset symbols — a trade from any of these to a non-stable is risk-increasing.
+const STABLES = new Set<string>(["USDT", "USDC", "USD1", "FDUSD"]);
+
 // ── Injectable dependencies ───────────────────────────────────────────────────
 
 export interface SchedulerDeps {
@@ -199,6 +202,10 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
     };
   }
 
+  // Force Risk-Off override: set by the dashboard; suppresses risk-increasing trades
+  // for one cycle. Active only in live mode (dryRun cycles never clear it).
+  const riskOffOverrideActive = state.riskOffOverride?.active === true && !dryRun;
+
   function conclude(
     action: SchedulerAction,
     opts: {
@@ -211,6 +218,17 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
   ): SchedulerResult {
     // Always update HWM in memory. Persist state and day ledger only for real cycles.
     updateHwm(state, totalValueUsd);
+
+    // Clear risk-off override after one complete live cycle (any action except SKIPPED).
+    if (riskOffOverrideActive && action !== "SKIPPED") {
+      state.riskOffOverride = { active: false, setAt: state.riskOffOverride!.setAt };
+    }
+
+    // Record the last qualifying trade timestamp for the rolling 24h deadline display.
+    // Warning-only — no gate, no logic change. dryRun cycles never qualify.
+    if (!dryRun && (action === "EXECUTED" || action === "FALLBACK_EXECUTED")) {
+      state.lastQualifyingTradeAt = cycleId;
+    }
 
     if (action !== "SKIPPED" && !dryRun) {
       const dayStatus = action === "BLOCKED" ? "BLOCKED" : "EXECUTED";
@@ -269,34 +287,42 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
   if (cycleResult.executionPlan !== null && cycleResult.proposal !== null) {
     const proposal = cycleResult.proposal;
 
-    const drawdownGate = checkProjectedDrawdown({
-      fromAsset: proposal.fromAsset,
-      toAsset: proposal.toAsset,
-      tradeValueUsd: proposal.estimatedValueUsd,
-      portfolioValueUsd: totalValueUsd,
-      currentVolatilePct,
-      currentDrawdownPct,
-      policy,
-    });
+    // Force Risk-Off override: suppress stable→volatile (risk-increasing) trades
+    // for this cycle and fall through to the fallback qualification attempt instead.
+    const isRiskIncreasing = STABLES.has(proposal.fromAsset) && !STABLES.has(proposal.toAsset);
+    if (riskOffOverrideActive && isRiskIncreasing) {
+      console.log("[keel scheduler] force-risk-off override active — suppressing stable→volatile trade");
+      // Falls through to Path 3 (fallback qualification attempt) below
+    } else {
+      const drawdownGate = checkProjectedDrawdown({
+        fromAsset: proposal.fromAsset,
+        toAsset: proposal.toAsset,
+        tradeValueUsd: proposal.estimatedValueUsd,
+        portfolioValueUsd: totalValueUsd,
+        currentVolatilePct,
+        currentDrawdownPct,
+        policy,
+      });
 
-    if (drawdownGate.ok) {
-      const execResult = doExecute(cycleResult.executionPlan);
-      if (execResult.ok) {
-        return conclude("EXECUTED", {
+      if (drawdownGate.ok) {
+        const execResult = doExecute(cycleResult.executionPlan);
+        if (execResult.ok) {
+          return conclude("EXECUTED", {
+            proposal,
+            drawdownGate,
+            guardrailResults: cycleResult.guardrailResults,
+            txHash: execResult.txHash,
+          });
+        }
+        return conclude("BLOCKED", {
           proposal,
           drawdownGate,
           guardrailResults: cycleResult.guardrailResults,
-          txHash: execResult.txHash,
+          blockedReason: `execution failed: ${execResult.error ?? "unknown"}`,
         });
       }
-      return conclude("BLOCKED", {
-        proposal,
-        drawdownGate,
-        guardrailResults: cycleResult.guardrailResults,
-        blockedReason: `execution failed: ${execResult.error ?? "unknown"}`,
-      });
+      // Projected-drawdown gate blocked — fall through to fallback
     }
-    // Projected-drawdown gate blocked — fall through to fallback
   }
 
   // ── Path 3: Fallback qualification attempt ───────────────────────────────────

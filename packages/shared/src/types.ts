@@ -436,6 +436,14 @@ export interface AgentPersistentState {
   dailyLossStartUsd: number;  // portfolio value at start of the current trading day
   dayLedger: Record<string, DayAttemptEntry>; // dateKey → attempt entry
   lastUpdated: string;        // ISO-8601
+  // Set by the dashboard; cleared by the scheduler after one full cycle executes.
+  // When active, any stable→volatile (risk-increasing) trade proposal is suppressed
+  // and the cycle falls through to the fallback qualification attempt.
+  riskOffOverride?: {
+    active: boolean;
+    setAt: string;  // ISO-8601 of when the override was requested
+  };
+  lastQualifyingTradeAt?: string; // ISO-8601 of last EXECUTED or FALLBACK_EXECUTED live cycle
 }
 
 // ── Projected-drawdown gate result (§4 asymmetric pre-execution check) ────────
@@ -475,6 +483,24 @@ export interface AuditEntry {
   blockedReason?: string;
   dryRun?: boolean;                    // true when produced by a dry-run cycle; no funds moved
   hubAttempt?: HubAttempt;             // per-tool Hub status when HUB_ENABLED=yes; absent otherwise
+}
+
+// ── Portfolio snapshot (persisted after every runner cycle) ──────────────────
+// Written to data/portfolio-snapshot.json by the runner; read by the dashboard.
+// Source priority: (1) TWAK balance query, (2) this file, (3) env vars (SIMULATION).
+
+export type PortfolioFreshness = "LIVE" | "STALE" | "UNAVAILABLE";
+
+export interface PortfolioSnapshot {
+  snapshotAt: string;                // ISO-8601 of when snapshot was taken
+  portfolioUsd: number;
+  tokenBalances: Partial<Record<AssetSymbol, { balance: number; valueUsd: number }>>;
+  allocation: { volatilePct: number; stablePct: number; gasPct: number };
+  hwm: number;
+  currentDrawdownPct: number;
+  lastBscTxHash: string | null;
+  lastCycleResult: SchedulerAction | null;
+  source: "twak" | "env";          // which source provided the portfolio numbers
 }
 
 // ── Agent state (top-level for the dashboard) ─────────────────────────────────

@@ -9,9 +9,48 @@ import { Card, CardHeader } from "./ui/Card";
 import { fmtUsd, fmtDateTime } from "../lib/format";
 
 interface Props {
-  state: Pick<AgentPersistentState, "highWaterMarkUsd" | "dayLedger"> | null;
+  state: Pick<AgentPersistentState, "highWaterMarkUsd" | "dayLedger" | "lastQualifyingTradeAt"> | null;
   todayKey: string;
   isLoading: boolean;
+}
+
+type DeadlineStatus = "QUALIFIED" | "DUE_SOON" | "OVERDUE" | "BLOCKED" | "UNKNOWN";
+
+const DEADLINE_COLORS: Record<string, string> = {
+  QUALIFIED: "var(--green)",
+  DUE_SOON:  "var(--amber)",
+  OVERDUE:   "var(--red)",
+  BLOCKED:   "var(--red)",
+};
+
+function DeadlineBadge({
+  status,
+  nextDeadlineLabel,
+}: {
+  status: DeadlineStatus;
+  nextDeadlineLabel: string | null;
+}) {
+  const color = DEADLINE_COLORS[status] ?? "var(--text-muted)";
+  const label =
+    status === "DUE_SOON" && nextDeadlineLabel
+      ? `DUE_SOON — by ${nextDeadlineLabel}`
+      : status;
+  return (
+    <span
+      style={{
+        fontSize: "10px",
+        fontWeight: 700,
+        color,
+        background: `${color}18`,
+        border: `1px solid ${color}40`,
+        borderRadius: "3px",
+        padding: "2px 6px",
+        letterSpacing: "0.06em",
+      }}
+    >
+      {label}
+    </span>
+  );
 }
 
 function StatusBadge({ status }: { status: DayAttemptEntry["status"] | null }) {
@@ -42,6 +81,27 @@ function StatusBadge({ status }: { status: DayAttemptEntry["status"] | null }) {
 export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
   const todayEntry = state?.dayLedger[todayKey] ?? null;
   const hwm = state?.highWaterMarkUsd ?? 0;
+
+  // Compute rolling 24h deadline status — warning-only, no gate.
+  const lastQualAt = state?.lastQualifyingTradeAt ?? null;
+  let deadlineStatus: DeadlineStatus = "UNKNOWN";
+  let nextDeadlineLabel: string | null = null;
+
+  if (lastQualAt) {
+    const lastMs     = new Date(lastQualAt).getTime();
+    const deadlineMs = lastMs + 24 * 60 * 60 * 1000;
+    const warnMs     = lastMs + 20 * 60 * 60 * 1000;
+    const nowMs      = Date.now();
+    nextDeadlineLabel = new Date(deadlineMs).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    if      (nowMs >= deadlineMs) deadlineStatus = "OVERDUE";
+    else if (nowMs >= warnMs)     deadlineStatus = "DUE_SOON";
+    else                          deadlineStatus = "QUALIFIED";
+  } else if (todayEntry?.status === "BLOCKED") {
+    deadlineStatus = "BLOCKED";
+  }
 
   return (
     <Card>
@@ -81,6 +141,16 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
               </span>
             </div>
           </div>
+
+          {/* Rolling 24h safety check */}
+          {deadlineStatus !== "UNKNOWN" && (
+            <div style={{ marginBottom: "14px" }}>
+              <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
+                rolling 24-hour safety check
+              </div>
+              <DeadlineBadge status={deadlineStatus} nextDeadlineLabel={nextDeadlineLabel} />
+            </div>
+          )}
 
           {todayEntry ? (
             <div

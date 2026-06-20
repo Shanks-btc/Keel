@@ -34,6 +34,49 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Responsive dashboard layout ────────────────────────────────────────────── */
+
+.dashboard-grid {
+  padding: 0 24px 24px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.dashboard-grid .span-2 { grid-column: span 2; }
+.dashboard-grid .span-4 { grid-column: span 4; }
+
+@media (max-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .dashboard-grid .span-4 { grid-column: span 2; }
+}
+
+@media (max-width: 640px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    padding: 0 12px 12px;
+  }
+  .dashboard-grid .span-2,
+  .dashboard-grid .span-4 { grid-column: span 1; }
+  .top-bar-subtitle { display: none; }
+  .top-bar-center { display: none; }
+}
+
+.dashboard-bottom {
+  padding: 0 24px 40px;
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 12px;
+}
+
+@media (max-width: 768px) {
+  .dashboard-bottom {
+    grid-template-columns: 1fr;
+    padding: 0 12px 40px;
+  }
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

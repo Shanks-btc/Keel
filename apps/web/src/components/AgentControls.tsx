@@ -8,11 +8,13 @@
 
 import { useState } from "react";
 import type { AgentStatus, DrawdownGateResult, RiskMode } from "@keel/shared";
+import { SCORING_COST_PER_SWAP_LEG } from "@keel/shared";
 import { Card, CardHeader } from "./ui/Card";
 import { modeColor } from "../lib/format";
 
 interface Props {
   status: AgentStatus;
+  riskOffActive?: boolean;
   onPause: () => void;
   onResume: () => void;
   onRefresh: () => void;
@@ -21,6 +23,7 @@ interface Props {
 interface CyclePreview {
   ok: boolean;
   priceIsSimulation?: boolean;
+  direction?: string;
   R?: number;
   mode?: RiskMode;
   targetVolatilePct?: number;
@@ -29,6 +32,8 @@ interface CyclePreview {
   overlaysApplied?: string[];
   drawdownPct?: number;
   drawdownGate?: DrawdownGateResult;
+  proposal?: { fromAsset: string; toAsset: string; rationale: string };
+  note?: string;
   error?: string;
 }
 
@@ -72,10 +77,12 @@ function Btn({
   );
 }
 
-export function AgentControls({ status, onPause, onResume, onRefresh }: Props) {
+export function AgentControls({ status, riskOffActive, onPause, onResume, onRefresh }: Props) {
   const isPaused = status === "Paused";
   const [preview, setPreview] = useState<CyclePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [overrideLoading, setOverrideLoading] = useState(false);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
 
   async function runPreview() {
     setPreviewLoading(true);
@@ -88,6 +95,38 @@ export function AgentControls({ status, onPause, onResume, onRefresh }: Props) {
       setPreview({ ok: false, error: String(err) });
     } finally {
       setPreviewLoading(false);
+    }
+  }
+
+  async function runRotatePreview() {
+    setPreviewLoading(true);
+    setPreview(null);
+    try {
+      const res = await fetch("/api/cycle-preview?direction=to-stable");
+      const data = (await res.json()) as CyclePreview;
+      setPreview(data);
+    } catch (err) {
+      setPreview({ ok: false, error: String(err) });
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function setRiskOffOverride(active: boolean) {
+    setOverrideLoading(true);
+    setOverrideError(null);
+    try {
+      const res = await fetch("/api/agent-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ riskOffOverride: { active } }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      onRefresh(); // reload state to reflect change
+    } catch (err) {
+      setOverrideError(String(err));
+    } finally {
+      setOverrideLoading(false);
     }
   }
 
@@ -106,7 +145,7 @@ export function AgentControls({ status, onPause, onResume, onRefresh }: Props) {
         subtitle="Daily qualification scheduler"
       />
 
-      {/* Action buttons */}
+      {/* Primary action buttons */}
       <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px" }}>
         {isPaused ? (
           <Btn onClick={onResume} color="var(--green)">
@@ -125,6 +164,55 @@ export function AgentControls({ status, onPause, onResume, onRefresh }: Props) {
         </Btn>
       </div>
 
+      {/* Force Risk-Off override row */}
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "10px", alignItems: "center" }}>
+        {riskOffActive ? (
+          <Btn
+            onClick={() => void setRiskOffOverride(false)}
+            color="var(--red)"
+            disabled={overrideLoading}
+          >
+            {overrideLoading ? "Clearing…" : "✕ Clear Risk-Off Override"}
+          </Btn>
+        ) : (
+          <Btn
+            onClick={() => void setRiskOffOverride(true)}
+            color="var(--amber)"
+            disabled={overrideLoading}
+          >
+            {overrideLoading ? "Setting…" : "⬇ Force Risk-Off"}
+          </Btn>
+        )}
+        <Btn onClick={runRotatePreview} color="var(--blue)" disabled={previewLoading}>
+          {previewLoading ? "Computing…" : "Preview Rotate to Stables"}
+        </Btn>
+      </div>
+
+      {/* Risk-Off override status */}
+      {riskOffActive && (
+        <div
+          style={{
+            fontSize: "11px",
+            fontWeight: 600,
+            color: "var(--amber)",
+            background: "var(--amber)10",
+            border: "1px solid var(--amber)35",
+            borderRadius: "4px",
+            padding: "6px 10px",
+            marginBottom: "10px",
+          }}
+        >
+          Force Risk-Off active — next live cycle will not increase volatile exposure
+          (stable→volatile proposals suppressed; fallback qualification attempt used instead).
+          Cleared automatically after one live cycle executes.
+        </div>
+      )}
+      {overrideError && (
+        <div style={{ fontSize: "11px", color: "var(--red)", marginBottom: "8px" }}>
+          Override error: {overrideError}
+        </div>
+      )}
+
       {/* Safety notice */}
       <div
         style={{
@@ -137,6 +225,8 @@ export function AgentControls({ status, onPause, onResume, onRefresh }: Props) {
         Pause halts the daily qualification scheduler. The risk engine continues to compute.
         All safety gates remain active (kill-switch → allowlist → per-trade cap → daily-loss
         cap → slippage → projected-drawdown). Holdings are NOT flattened on pause.
+        Force Risk-Off suppresses risk-increasing trades for one live cycle — drawdown-neutral
+        fallback qualification attempt (USDT→USDC) is used instead.
         <br />
         Execution requires the scheduler running server-side with{" "}
         <code style={{ fontFamily: "monospace", color: "var(--text-secondary)" }}>
@@ -162,7 +252,41 @@ export function AgentControls({ status, onPause, onResume, onRefresh }: Props) {
             </div>
           )}
 
-          {preview.ok !== false ? (
+          {/* Rotate to Stables preview */}
+          {preview.direction === "to-stable" && preview.proposal ? (
+            <>
+              <div style={{ fontSize: "12px", marginBottom: "8px" }}>
+                <span style={{ color: "var(--text-muted)" }}>Proposed rotation: </span>
+                <strong style={{ fontFamily: "monospace" }}>
+                  {preview.proposal.fromAsset} → {preview.proposal.toAsset}
+                </strong>
+              </div>
+              {preview.drawdownGate && (
+                <div
+                  style={{
+                    fontSize: "11px",
+                    padding: "6px 8px",
+                    borderRadius: "4px",
+                    background: "var(--green)10",
+                    border: "1px solid var(--green)35",
+                    marginBottom: "8px",
+                  }}
+                >
+                  <strong style={{ color: "var(--green)" }}>
+                    Drawdown gate (§4): PASS
+                  </strong>
+                  <div style={{ color: "var(--text-secondary)", marginTop: "2px", lineHeight: "1.4" }}>
+                    {preview.drawdownGate.reason}
+                  </div>
+                </div>
+              )}
+              {preview.note && (
+                <div style={{ fontSize: "10px", color: "var(--text-muted)", lineHeight: "1.5" }}>
+                  {preview.note}
+                </div>
+              )}
+            </>
+          ) : preview.ok !== false ? (
             <>
               {/* Engine output */}
               <div
@@ -197,9 +321,7 @@ export function AgentControls({ status, onPause, onResume, onRefresh }: Props) {
               </div>
 
               {(preview.overlaysApplied?.length ?? 0) > 0 && (
-                <div
-                  style={{ fontSize: "11px", color: "var(--amber)", marginBottom: "6px" }}
-                >
+                <div style={{ fontSize: "11px", color: "var(--amber)", marginBottom: "6px" }}>
                   Overlays: {preview.overlaysApplied?.join(", ")}
                 </div>
               )}
@@ -253,6 +375,27 @@ export function AgentControls({ status, onPause, onResume, onRefresh }: Props) {
               Preview error: {preview.error}
             </div>
           )}
+
+          {/* Competition scoring deduction — documentation only, NOT used in any gate */}
+          <div
+            style={{
+              fontSize: "11px",
+              color: "var(--text-secondary)",
+              marginTop: "8px",
+              padding: "5px 8px",
+              borderRadius: "4px",
+              background: "var(--surface)",
+              border: "1px solid var(--border)",
+              fontFamily: "monospace",
+            }}
+          >
+            Competition scoring deduction:{" "}
+            <strong>{(SCORING_COST_PER_SWAP_LEG * 100).toFixed(3)}% per swap leg</strong>
+            {" "}· 2-leg swap = {(SCORING_COST_PER_SWAP_LEG * 2 * 100).toFixed(3)}% total
+            <span style={{ color: "var(--text-muted)", fontFamily: "sans-serif", fontSize: "10px" }}>
+              {" "}(display only — not used in gates or safety checks)
+            </span>
+          </div>
 
           <div
             style={{

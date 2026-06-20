@@ -2,12 +2,22 @@ import type { Swap } from "@keel/shared";
 import { fmtUsd, fmtNum, fmtDateTime, shortHash } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
-export function LatestAutonomousSwapCard({ data }: { data: Swap }) {
+export function LatestAutonomousSwapCard({ data }: { data: Swap | null }) {
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader title="Latest Autonomous Swap" />
+        <div style={{ color: "var(--text-muted)", fontSize: "13px", padding: "24px 0", textAlign: "center" }}>
+          No autonomous swaps recorded yet — the daily qualification scheduler will log here.
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader title="Latest Autonomous Swap" />
 
-      {/* Route */}
       <div
         style={{
           display: "flex",
@@ -16,37 +26,18 @@ export function LatestAutonomousSwapCard({ data }: { data: Swap }) {
           marginBottom: "14px",
         }}
       >
-        <span
-          style={{
-            fontSize: "20px",
-            fontWeight: 700,
-            fontFamily: "monospace",
-          }}
-        >
+        <span style={{ fontSize: "20px", fontWeight: 700, fontFamily: "monospace" }}>
           {data.fromAsset}
         </span>
         <span style={{ fontSize: "16px", color: "var(--text-muted)" }}>→</span>
-        <span
-          style={{
-            fontSize: "20px",
-            fontWeight: 700,
-            fontFamily: "monospace",
-          }}
-        >
+        <span style={{ fontSize: "20px", fontWeight: 700, fontFamily: "monospace" }}>
           {data.toAsset}
         </span>
-        <span
-          style={{
-            fontSize: "12px",
-            color: "var(--text-muted)",
-            marginLeft: "auto",
-          }}
-        >
+        <span style={{ fontSize: "12px", color: "var(--text-muted)", marginLeft: "auto" }}>
           {fmtDateTime(data.timestamp)}
         </span>
       </div>
 
-      {/* Details grid */}
       <div
         style={{
           display: "grid",
@@ -56,11 +47,11 @@ export function LatestAutonomousSwapCard({ data }: { data: Swap }) {
         }}
       >
         {[
-          { label: "In", value: `${fmtNum(data.amountIn, 6)} ${data.fromAsset}` },
-          { label: "Out", value: `${fmtNum(data.amountOut, 6)} ${data.toAsset}` },
-          { label: "Value", value: fmtUsd(data.valueUsd) },
-          { label: "Impact", value: `${data.priceImpactPct.toFixed(2)}%` },
-          { label: "Slippage", value: `${data.slippagePct.toFixed(2)}%` },
+          { label: "In",      value: `${fmtNum(data.amountIn, 6)} ${data.fromAsset}` },
+          { label: "Out",     value: data.amountOut > 0 ? `${fmtNum(data.amountOut, 6)} ${data.toAsset}` : "—" },
+          { label: "Value",   value: data.valueUsd > 0 ? fmtUsd(data.valueUsd) : "—" },
+          { label: "Impact",  value: data.priceImpactPct > 0 ? `${data.priceImpactPct.toFixed(2)}%` : "—" },
+          { label: "Slippage",value: data.slippagePct > 0 ? `${data.slippagePct.toFixed(2)}%` : "—" },
         ].map(({ label, value }) => (
           <div key={label}>
             <div
@@ -88,7 +79,6 @@ export function LatestAutonomousSwapCard({ data }: { data: Swap }) {
         ))}
       </div>
 
-      {/* Reason */}
       <div
         style={{
           fontSize: "12px",
@@ -103,7 +93,6 @@ export function LatestAutonomousSwapCard({ data }: { data: Swap }) {
         {data.reason}
       </div>
 
-      {/* Tx hash */}
       <a
         href={data.explorerUrl}
         target="_blank"

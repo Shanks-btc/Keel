@@ -253,7 +253,7 @@ export const mockAgentState: AgentState = {
       id: "pt-002",
       type: "SwapExecution",
       label: "First qualifying BSC swap",
-      timestamp: isoAt(8),
+      timestamp: "2026-06-19T08:00:00.000Z",
       txHash:
         "0x99ef6856cd679a65a7d7877b97bd5a4f525b98b0b61a2589481f2a108e6d9854",
       explorerUrl:
@@ -273,7 +273,7 @@ export const mockAgentState: AgentState = {
       id: "pt-004",
       type: "AgentIdentity",
       label: "Agent Identity — Registered",
-      timestamp: isoAt(1440),
+      timestamp: "2026-06-01T12:00:00.000Z",
       txHash:
         "0x006151e42ceb1b151ddcd7b172b9dd2087cbabbe7fbe3a58c63274c3fa6ac305",
       explorerUrl:

@@ -2,7 +2,18 @@ import type { Swap } from "@keel/shared";
 import { fmtUsd, fmtNum, fmtRelative, shortHash } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
-export function LatestSwapCard({ data }: { data: Swap }) {
+export function LatestSwapCard({ data }: { data: Swap | null }) {
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader title="Latest Swap" />
+        <div style={{ color: "var(--text-muted)", fontSize: "13px", padding: "24px 0", textAlign: "center" }}>
+          No swaps recorded yet — live cycles will appear here.
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader title="Latest Swap" />
@@ -28,10 +39,10 @@ export function LatestSwapCard({ data }: { data: Swap }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px", marginBottom: "12px" }}>
         {[
-          { label: "Amount In", value: `${fmtNum(data.amountIn, 6)} ${data.fromAsset}` },
-          { label: "Amount Out", value: `${fmtNum(data.amountOut, 6)} ${data.toAsset}` },
-          { label: "Value", value: fmtUsd(data.valueUsd) },
-          { label: "Slippage", value: `${data.slippagePct.toFixed(2)}%` },
+          { label: "Amount In",  value: `${fmtNum(data.amountIn, 6)} ${data.fromAsset}` },
+          { label: "Amount Out", value: data.amountOut > 0 ? `${fmtNum(data.amountOut, 6)} ${data.toAsset}` : "—" },
+          { label: "Value",      value: data.valueUsd > 0 ? fmtUsd(data.valueUsd) : "—" },
+          { label: "Slippage",   value: data.slippagePct > 0 ? `${data.slippagePct.toFixed(2)}%` : "—" },
         ].map(({ label, value }) => (
           <div key={label}>
             <div style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "2px" }}>{label}</div>

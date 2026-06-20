@@ -1,16 +1,53 @@
-import type { Exposure } from "@keel/shared";
+import type { Exposure, PortfolioFreshness } from "@keel/shared";
 import { Card, CardHeader } from "./ui/Card";
 
-export function ExposureCard({ data }: { data: Exposure }) {
+interface Props {
+  data: Exposure | null;
+  freshness?: PortfolioFreshness;
+  isSimulation?: boolean;
+}
+
+export function ExposureCard({ data, freshness, isSimulation }: Props) {
+  const badge = isSimulation
+    ? <span style={{ fontSize: "10px", fontWeight: 700, color: "var(--amber)",
+        border: "1px solid var(--amber)40", borderRadius: "3px", padding: "1px 5px" }}>SIM</span>
+    : freshness
+    ? (() => {
+        const cfg: Record<PortfolioFreshness, { label: string; color: string }> = {
+          LIVE:        { label: "LIVE",  color: "var(--green)" },
+          STALE:       { label: "STALE", color: "var(--amber)" },
+          UNAVAILABLE: { label: "—",     color: "var(--text-muted)" },
+        };
+        const { label, color } = cfg[freshness];
+        return (
+          <span style={{ fontSize: "10px", fontWeight: 700, color, letterSpacing: "0.06em",
+            border: `1px solid ${color}40`, borderRadius: "3px", padding: "1px 5px" }}>
+            {label}
+          </span>
+        );
+      })()
+    : undefined;
+
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader title="Volatile Exposure" action={badge} />
+        <div style={{ color: "var(--text-muted)", fontSize: "13px", padding: "24px 0", textAlign: "center" }}>
+          Awaiting first live portfolio snapshot
+        </div>
+      </Card>
+    );
+  }
+
   const bars = [
-    { label: "Volatile", pct: data.volatilePct, color: "var(--green)" },
-    { label: "Stable", pct: data.stablePct, color: "var(--blue)" },
-    { label: "Gas (BNB)", pct: data.gasPct, color: "#F0B90B" },
+    { label: "Volatile", pct: Math.round(data.volatilePct), color: "var(--green)" },
+    { label: "Stable",   pct: Math.round(data.stablePct),   color: "var(--blue)" },
+    { label: "Gas (BNB)",pct: Math.round(data.gasPct),      color: "#F0B90B" },
   ];
 
   return (
     <Card>
-      <CardHeader title="Volatile Exposure" />
+      <CardHeader title="Volatile Exposure" action={badge} />
       <div
         style={{
           fontSize: "28px",
@@ -19,10 +56,9 @@ export function ExposureCard({ data }: { data: Exposure }) {
           marginBottom: "16px",
         }}
       >
-        {data.volatilePct}%
+        {Math.round(data.volatilePct)}%
       </div>
 
-      {/* Stacked bar */}
       <div
         style={{
           height: "8px",
@@ -41,7 +77,6 @@ export function ExposureCard({ data }: { data: Exposure }) {
         ))}
       </div>
 
-      {/* Legend */}
       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         {bars.map(({ label, pct, color }) => (
           <div

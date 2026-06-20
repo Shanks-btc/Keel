@@ -1,11 +1,9 @@
-// Server-side API route — runs the §0a risk formula and §4 drawdown-gate logic
-// against a neutral mock snapshot (CMC API is not available in the web process).
-// Inline formulas mirror packages/agent/src/risk/engine.ts and
-// packages/agent/src/loop/drawdown-gate.ts exactly.
-// priceIsSimulation: true is always returned — the client MUST display the
-// "SIMULATION" label on these results.
+// Server-side API route — runs the §0a risk formula and §4 drawdown-gate logic.
+// Fetches live CMC data when CMC_PRO_API_KEY is set; falls back to a neutral
+// mock snapshot and returns priceIsSimulation: true.
+// Supports ?direction=to-stable for a Rotate to Stables preview.
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { readFileSync } from "fs";
 import { join, resolve } from "path";
 import type { AgentPersistentState, DrawdownGateResult, RiskMode } from "@keel/shared";
@@ -22,8 +20,7 @@ function readState(): AgentPersistentState | null {
   }
 }
 
-// §0a risk formula (identical to risk/engine.ts computeRiskScore):
-//   R = clamp01( min(1,|c1h|/3)*0.4 + min(1,|c24h|/10)*0.4 + max(0,(fg-60)/40)*0.2 )
+// §0a risk formula (mirrors risk/engine.ts computeRiskScore)
 function computeR(change1h: number, change24h: number, fearGreed: number): number {
   const c1  = Math.min(1, Math.abs(change1h)  /  3) * 0.4;
   const c24 = Math.min(1, Math.abs(change24h) / 10) * 0.4;
@@ -31,26 +28,32 @@ function computeR(change1h: number, change24h: number, fearGreed: number): numbe
   return Math.min(1, Math.max(0, c1 + c24 + fg));
 }
 
-// §0a mode mapping (identical to risk/engine.ts pickMode):
 function pickMode(R: number): { mode: RiskMode; targetVolatilePct: number } {
   if (R < 0.33) return { mode: "Risk-on",  targetVolatilePct: 80 };
   if (R < 0.66) return { mode: "Neutral",  targetVolatilePct: 45 };
   return           { mode: "Risk-off", targetVolatilePct: 18 };
 }
 
-// §4 projected-drawdown gate (stable→volatile risk-increasing preview):
-//   mirrors loop/drawdown-gate.ts checkProjectedDrawdown
+// §4 projected-drawdown gate (mirrors loop/drawdown-gate.ts)
 function checkDrawdownGate(
   drawdownPct: number,
   currentVolatilePct: number,
   tradeValueUsd: number,
   portfolioValueUsd: number,
+  isRiskReducing: boolean,
 ): DrawdownGateResult {
+  if (isRiskReducing) {
+    return {
+      ok: true,
+      guardName: "projected-drawdown",
+      reason: "risk-reducing (volatile→stable) — always passes the projected-drawdown gate",
+      isRiskReducing: true,
+    };
+  }
   const projVolatileUsd = (currentVolatilePct / 100) * portfolioValueUsd + tradeValueUsd;
   const projVolatilePct = portfolioValueUsd > 0
     ? (projVolatileUsd / portfolioValueUsd) * 100
     : 0;
-
   if (drawdownPct <= -14) {
     return {
       ok: false,
@@ -78,25 +81,85 @@ function checkDrawdownGate(
   };
 }
 
-// Neutral mock snapshot — used only for the UI preview, never for real execution.
-// All results produced from this are labelled priceIsSimulation: true.
-const PREVIEW_SNAPSHOT = { change1h: 0.5, change24h: 2.0, fearGreed: 45, symbol: "ETH", price: 3_400 };
+// Fallback snapshot used when CMC_PRO_API_KEY is absent or the API call fails.
+const FALLBACK_SNAPSHOT = { change1h: 0.5, change24h: 2.0, fearGreed: 45, symbol: "ETH", price: 3_400 };
 
-export async function GET() {
+// Attempt to fetch live ETH quote and Fear&Greed from CMC REST API.
+// Returns null on any error — caller falls back to FALLBACK_SNAPSHOT.
+async function fetchLiveSnapshot(): Promise<typeof FALLBACK_SNAPSHOT | null> {
+  const key = process.env.CMC_PRO_API_KEY;
+  if (!key) return null;
+
+  try {
+    const [quoteRes, fgRes] = await Promise.all([
+      fetch("https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?id=1027", {
+        headers: { "X-CMC_PRO_API_KEY": key, Accept: "application/json" },
+        signal: AbortSignal.timeout(8_000),
+      }),
+      fetch("https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest", {
+        headers: { "X-CMC_PRO_API_KEY": key, Accept: "application/json" },
+        signal: AbortSignal.timeout(8_000),
+      }),
+    ]);
+
+    const quoteData = (await quoteRes.json()) as {
+      data?: { "1027"?: { quote?: { USD?: { price?: number; percent_change_1h?: number; percent_change_24h?: number } } } };
+    };
+    const fgData = (await fgRes.json()) as {
+      data?: { value?: number };
+    };
+
+    const eth = quoteData?.data?.["1027"]?.quote?.USD;
+    if (!eth || typeof eth.price !== "number") return null;
+
+    return {
+      symbol: "ETH",
+      price: eth.price,
+      change1h: eth.percent_change_1h ?? 0,
+      change24h: eth.percent_change_24h ?? 0,
+      fearGreed: typeof fgData?.data?.value === "number" ? fgData.data.value : 45,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function GET(request: NextRequest) {
+  const direction = new URL(request.url).searchParams.get("direction");
   const state = readState();
+  const hwmUsd = state?.highWaterMarkUsd ?? 0;
+  const drawdownPct = 0; // unknown without TWAK balance; assume at HWM for preview
 
-  const R = computeR(
-    PREVIEW_SNAPSHOT.change1h,
-    PREVIEW_SNAPSHOT.change24h,
-    PREVIEW_SNAPSHOT.fearGreed,
-  );
+  // ── Rotate to Stables preview ─────────────────────────────────────────────
+  if (direction === "to-stable") {
+    const drawdownGate = checkDrawdownGate(drawdownPct, 50, 100, 10_000, true);
+    return NextResponse.json({
+      ok: true,
+      direction: "to-stable",
+      priceIsSimulation: true,
+      proposal: {
+        fromAsset: "ETH",
+        toAsset: "USDT",
+        rationale:
+          "drawdown-resistant volatile→stable rotation — not guaranteed unless organizers confirm stable-to-stable counts; " +
+          "actual amount determined at execution time by the scheduler based on current holdings",
+      },
+      drawdownGate,
+      note:
+        "Rotate to Stables suppresses the next stable→volatile trade for one scheduler cycle. " +
+        "Only live cycles are affected (dry-run cycles never clear the override). " +
+        "Eligible stables: USDT, USDC, USD1, FDUSD. Only TWAK submits trades.",
+    });
+  }
+
+  // ── Standard cycle preview ────────────────────────────────────────────────
+  const liveSnapshot = await fetchLiveSnapshot();
+  const snapshot = liveSnapshot ?? FALLBACK_SNAPSHOT;
+  const priceIsSimulation = liveSnapshot === null;
+
+  const R = computeR(snapshot.change1h, snapshot.change24h, snapshot.fearGreed);
   const { mode, targetVolatilePct } = pickMode(R);
 
-  // drawdownPct unknown without TWAK balance; assume 0 (at HWM) for the preview
-  const hwmUsd = state?.highWaterMarkUsd ?? 0;
-  const drawdownPct = 0;
-
-  // §1 overlays: check emergency-mode / drawdown-overlay caps
   let adjustedTarget = targetVolatilePct;
   let emergencyMode = false;
   const overlaysApplied: string[] = [];
@@ -109,16 +172,15 @@ export async function GET() {
     overlaysApplied.push("drawdown-overlay (cap 45%)");
   }
 
-  // §4 drawdown gate: preview a typical risk-increasing trade (25% of a $10k portfolio)
   const portfolioPreview = 10_000;
   const tradePreview = portfolioPreview * 0.25;
-  const volatilePreview = 45; // neutral assumption
-  const drawdownGate = checkDrawdownGate(drawdownPct, volatilePreview, tradePreview, portfolioPreview);
+  const volatilePreview = 45;
+  const drawdownGate = checkDrawdownGate(drawdownPct, volatilePreview, tradePreview, portfolioPreview, false);
 
   return NextResponse.json({
     ok: true,
-    priceIsSimulation: true,
-    snapshot: PREVIEW_SNAPSHOT,
+    priceIsSimulation,
+    snapshot,
     R: +R.toFixed(4),
     mode,
     targetVolatilePct,
@@ -129,5 +191,6 @@ export async function GET() {
     hwmUsd,
     drawdownGate,
     dayLedger: state?.dayLedger ?? {},
+    riskOffOverride: state?.riskOffOverride ?? null,
   });
 }

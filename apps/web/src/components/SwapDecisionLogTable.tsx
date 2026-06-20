@@ -42,6 +42,21 @@ export function SwapDecisionLogTable({ data }: { data: SwapLogRow[] }) {
             </tr>
           </thead>
           <tbody>
+            {data.length === 0 && (
+              <tr>
+                <td
+                  colSpan={8}
+                  style={{
+                    padding: "24px 8px",
+                    textAlign: "center",
+                    color: "var(--text-muted)",
+                    fontSize: "12px",
+                  }}
+                >
+                  No live trades recorded yet — the scheduler will log decisions here on each cycle.
+                </td>
+              </tr>
+            )}
             {data.map((row, i) => (
               <tr
                 key={row.id}

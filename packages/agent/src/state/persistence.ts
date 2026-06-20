@@ -5,10 +5,11 @@
 
 import * as fs from "fs";
 import * as path from "path";
-import type { AgentPersistentState, DayAttemptEntry } from "@keel/shared";
+import type { AgentPersistentState, DayAttemptEntry, PortfolioSnapshot } from "@keel/shared";
 
 export const DEFAULT_DATA_DIR = "./data";
 const STATE_FILE = "agent-state.json";
+const SNAPSHOT_FILE = "portfolio-snapshot.json";
 
 function emptyState(): AgentPersistentState {
   return {
@@ -62,4 +63,26 @@ export function recordDayAttempt(
   entry: DayAttemptEntry,
 ): void {
   state.dayLedger[entry.date] = entry;
+}
+
+export function writePortfolioSnapshot(
+  snapshot: PortfolioSnapshot,
+  dataDir = DEFAULT_DATA_DIR,
+): void {
+  const fp = path.join(dataDir, SNAPSHOT_FILE);
+  fs.mkdirSync(path.dirname(fp), { recursive: true });
+  const tmp = `${fp}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(snapshot, null, 2), "utf8");
+  fs.renameSync(tmp, fp);
+}
+
+export function readPortfolioSnapshot(
+  dataDir = DEFAULT_DATA_DIR,
+): PortfolioSnapshot | null {
+  try {
+    const fp = path.join(dataDir, SNAPSHOT_FILE);
+    return JSON.parse(fs.readFileSync(fp, "utf8")) as PortfolioSnapshot;
+  } catch {
+    return null;
+  }
 }

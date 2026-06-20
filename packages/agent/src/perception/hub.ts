@@ -315,8 +315,18 @@ export async function fetchHubSnapshot(
 // ── Hub enrichment signals ────────────────────────────────────────────────────
 
 // Extract RSI from get_crypto_technical_analysis result.
-// Tries several common field paths defensively.
+//
+// Hub MCP actual response shape (verified 2026-06-19):
+//   { rsi: { rsi7: "43.42", rsi14: "38.81", rsi21: "37.91" }, ... }
+// RSI values are strings — use rsi14 (14-day) as the primary signal.
 function extractRsi(raw: unknown): number | undefined {
+  // Hub MCP shape
+  const hub = raw as { rsi?: { rsi14?: unknown } };
+  if (hub?.rsi?.rsi14 != null) {
+    const n = parseFloat(String(hub.rsi.rsi14));
+    return isNaN(n) ? undefined : n;
+  }
+  // Defensive fallbacks for older/alternative shapes
   const obj = raw as {
     data?: {
       rsi?: number;
@@ -328,18 +338,38 @@ function extractRsi(raw: unknown): number | undefined {
   return d?.rsi ?? d?.technical_analysis?.rsi ?? d?.indicators?.rsi;
 }
 
-// Extract hours until the next high-impact macro event.
+// Extract hours until the next upcoming macro event.
+//
+// Hub MCP actual response shape (verified 2026-06-19):
+//   { upcomingEventNews: { rows: [[title, content, url, eventDate, originalContent], ...] } }
+// eventDate (index 3) is a human-readable string like "2 August 2026".
+// All returned events are treated as macro-relevant (the tool already pre-filters).
 function extractHoursToNextEvent(raw: unknown): number | undefined {
-  const obj = raw as {
-    data?: Array<{ date?: string; impact?: string }>;
-  };
+  // Hub MCP shape
+  const hub = raw as { upcomingEventNews?: { rows?: Array<unknown[]> } };
+  const rows = hub?.upcomingEventNews?.rows;
+  if (Array.isArray(rows) && rows.length > 0) {
+    const now = Date.now();
+    const hours = rows
+      .map((row) => {
+        const dateStr = typeof row[3] === "string" ? row[3] : undefined;
+        if (!dateStr) return Infinity;
+        const t = new Date(dateStr).getTime();
+        return isNaN(t) ? Infinity : (t - now) / 3_600_000;
+      })
+      .filter((h) => h > 0 && h !== Infinity)
+      .sort((a, b) => a - b);
+    return hours[0];
+  }
+  // Defensive fallback for older shape: { data: Array<{ date, impact }> }
+  const obj = raw as { data?: Array<{ date?: string; impact?: string }> };
   const events = obj?.data;
   if (!Array.isArray(events) || events.length === 0) return undefined;
   const now = Date.now();
   const upcoming = events
     .filter(e => {
       const imp = (e.impact ?? "").toLowerCase();
-      return imp === "high" || imp === "3"; // CMC may use string or numeric impact
+      return imp === "high" || imp === "3";
     })
     .map(e => {
       const t = e.date ? new Date(e.date).getTime() : NaN;
@@ -351,13 +381,20 @@ function extractHoursToNextEvent(raw: unknown): number | undefined {
 }
 
 // Extract BTC dominance % from get_global_metrics_latest result.
+//
+// Hub MCP actual response shape (verified 2026-06-19):
+//   { dominance: { btc: { current: "+58.35%" } }, ... }
+// Dominance is a string with sign and % — strip and parse.
 function extractBtcDominance(raw: unknown): number | undefined {
-  const obj = raw as {
-    data?: {
-      btc_dominance?: number;
-      btc_market_cap_dominance?: number;
-    };
-  };
+  // Hub MCP shape
+  const hub = raw as { dominance?: { btc?: { current?: unknown } } };
+  const pctStr = hub?.dominance?.btc?.current;
+  if (typeof pctStr === "string") {
+    const n = parseFloat(pctStr.replace(/[+%]/g, ""));
+    return isNaN(n) ? undefined : n;
+  }
+  // Defensive fallback for older shape: { data: { btc_dominance } }
+  const obj = raw as { data?: { btc_dominance?: number; btc_market_cap_dominance?: number } };
   return obj?.data?.btc_dominance ?? obj?.data?.btc_market_cap_dominance;
 }
 
@@ -373,11 +410,21 @@ export async function fetchHubEnrichment(
 ): Promise<HubSignals> {
   const signals: HubSignals = {};
 
+  // get_crypto_technical_analysis requires { id: "<numeric-id>" } — NOT { symbol }
+  const taId = CMC_HUB_ID[symbol];
+
   await Promise.allSettled([
-    runner("get_crypto_technical_analysis", { symbol })
+    (taId == null
+      ? Promise.reject(new Error(`${symbol} not in CMC Hub ID map`))
+      : runner("get_crypto_technical_analysis", { id: String(taId) })
+    )
       .then(raw => {
+        if (process.env["HUB_DEBUG"] === "yes") {
+          console.log("[keel hub] raw ta response:", JSON.stringify(raw).slice(0, 500));
+        }
         signals.rsi = extractRsi(raw);
-        console.log(`[keel hub] ta ok · RSI=${signals.rsi?.toFixed(1) ?? "n/a"}`);
+        const rsiLabel = signals.rsi != null ? signals.rsi.toFixed(1) : "no data available";
+        console.log(`[keel hub] ta ok · RSI=${rsiLabel}`);
         if (onToolResult) onToolResult("ta", "ok");
       })
       .catch((err: unknown) => {
@@ -388,9 +435,13 @@ export async function fetchHubEnrichment(
 
     runner("get_upcoming_macro_events", {})
       .then(raw => {
+        if (process.env["HUB_DEBUG"] === "yes") {
+          console.log("[keel hub] raw macro response:", JSON.stringify(raw).slice(0, 500));
+        }
         signals.hoursToNextMacroEvent = extractHoursToNextEvent(raw);
         const h = signals.hoursToNextMacroEvent;
-        console.log(`[keel hub] macro ok · next high-impact event in ${h != null ? `${h.toFixed(1)}h` : "n/a"}`);
+        const macroLabel = h != null ? `${h.toFixed(1)}h` : "no data available";
+        console.log(`[keel hub] macro ok · next event in ${macroLabel}`);
         if (onToolResult) onToolResult("macro", "ok");
       })
       .catch((err: unknown) => {
@@ -401,8 +452,14 @@ export async function fetchHubEnrichment(
 
     runner("get_global_metrics_latest", {})
       .then(raw => {
+        if (process.env["HUB_DEBUG"] === "yes") {
+          console.log("[keel hub] raw btcDom response:", JSON.stringify(raw).slice(0, 500));
+        }
         signals.btcDominancePct = extractBtcDominance(raw);
-        console.log(`[keel hub] btcDom ok · BTC dominance=${signals.btcDominancePct?.toFixed(1) ?? "n/a"}%`);
+        const domLabel = signals.btcDominancePct != null
+          ? `${signals.btcDominancePct.toFixed(1)}%`
+          : "no data available";
+        console.log(`[keel hub] btcDom ok · BTC dominance=${domLabel}`);
         if (onToolResult) onToolResult("btcDom", "ok");
       })
       .catch((err: unknown) => {

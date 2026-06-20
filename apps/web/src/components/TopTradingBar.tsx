@@ -60,6 +60,7 @@ export function TopTradingBar({
             Keel
           </span>
           <span
+            className="top-bar-subtitle"
             style={{
               fontSize: "11px",
               color: "var(--text-muted)",
@@ -73,7 +74,7 @@ export function TopTradingBar({
       </div>
 
       {/* Center — status pills */}
-      <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
+      <div className="top-bar-center" style={{ display: "flex", alignItems: "center", gap: "20px" }}>
         {/* Status */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <span

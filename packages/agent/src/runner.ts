@@ -39,9 +39,9 @@ import { dirname, resolve } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 loadDotEnv({ path: resolve(__dirname, "../../../.env") });
 
-import type { ExecutionPlan, ExecutionResult } from "@keel/shared";
+import type { ExecutionPlan, ExecutionResult, PortfolioSnapshot } from "@keel/shared";
 import { runScheduler } from "./loop/scheduler.js";
-import { loadState, DEFAULT_DATA_DIR } from "./state/persistence.js";
+import { loadState, writePortfolioSnapshot, DEFAULT_DATA_DIR } from "./state/persistence.js";
 import { execute } from "./execution/twak.js";
 
 function parseNum(key: string, fallback: number): number {
@@ -118,6 +118,31 @@ async function main(): Promise<void> {
         : {}),
     },
   });
+
+  // ── Persist portfolio snapshot for the dashboard ───────────────────────
+  try {
+    const finalState = loadState(dataDir);
+    const hwmUsd = finalState.highWaterMarkUsd;
+    const drawdownPct = hwmUsd > 0 ? ((totalValueUsd - hwmUsd) / hwmUsd) * 100 : 0;
+    const snapshot: PortfolioSnapshot = {
+      snapshotAt: new Date().toISOString(),
+      portfolioUsd: totalValueUsd,
+      tokenBalances: {},
+      allocation: {
+        volatilePct: totalValueUsd > 0 ? (volatileValueUsd / totalValueUsd) * 100 : 0,
+        stablePct: totalValueUsd > 0 ? (stableValueUsd / totalValueUsd) * 100 : 0,
+        gasPct: 0,
+      },
+      hwm: hwmUsd,
+      currentDrawdownPct: drawdownPct,
+      lastBscTxHash: result.txHash ?? null,
+      lastCycleResult: result.action,
+      source: "env",
+    };
+    writePortfolioSnapshot(snapshot, dataDir);
+  } catch {
+    // Snapshot write failure is non-fatal — runner cycle already completed
+  }
 
   // ── Log result (BNB_WALLET_PASSWORD never appears here) ─────────────────
   const modeTag = isDryRun ? "[dry-run] " : "";
