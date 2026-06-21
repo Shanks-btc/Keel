@@ -18,9 +18,11 @@ import type {
   MarketSignals,
   RiskScore,
   DrawdownState,
+  DrawdownPoint,
   HealthItem,
   ProofEntry,
   X402Confirmation,
+  PnL,
 } from "@keel/shared";
 import { AppShell } from "../components/AppShell";
 import { TopTradingBar } from "../components/TopTradingBar";
@@ -43,6 +45,8 @@ import { SystemHealthCard } from "../components/SystemHealthCard";
 import { AgentControls } from "../components/AgentControls";
 import { AgentWalletProofCard } from "../components/AgentWalletProofCard";
 import { SchedulerStatusCard } from "../components/SchedulerStatusCard";
+import { pickPnlLabel } from "../lib/pnl";
+import type { PnlBaseline } from "../lib/pnl";
 
 interface AgentStateResponse {
   ok: boolean;
@@ -60,6 +64,8 @@ interface PortfolioApiResponse {
   snapshot: PortfolioSnapshot | null;
   freshness: PortfolioFreshness;
   source: string;
+  pnlBaseline: PnlBaseline | null;
+  drawdownHistory: DrawdownPoint[];
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -150,6 +156,8 @@ function auditToSwapRow(entry: AuditEntry, index: number): SwapLogRow {
   };
 }
 
+// Returns a Swap only for EXECUTED/FALLBACK_EXECUTED entries with a real BSC txHash.
+// BLOCKED, SKIPPED, approval-only attempts, and entries without a txHash return null.
 function auditToSwap(entry: AuditEntry): Swap | null {
   if (!entry.txHash || !entry.proposal) return null;
   const p = entry.proposal;
@@ -325,9 +333,19 @@ export default function DashboardPage() {
       }
     : null;
 
-  // ── Latest swap (from audit.jsonl only) ──────────────────────────────────────
-  const latestSwapData: Swap | null = agentData?.lastAuditEntry
-    ? auditToSwap(agentData.lastAuditEntry)
+  // ── Latest confirmed BSC swap (EXECUTED or FALLBACK_EXECUTED with real txHash) ─
+  // Searches recentLiveAudit in reverse so BLOCKED/SKIPPED entries never populate the card.
+  // Both LatestSwapCard and LatestAutonomousSwapCard use this same source.
+  const latestExecutedEntry = agentData?.recentLiveAudit
+    ? [...agentData.recentLiveAudit]
+        .reverse()
+        .find(
+          (e) =>
+            (e.action === "EXECUTED" || e.action === "FALLBACK_EXECUTED") && !!e.txHash,
+        )
+    : null;
+  const latestSwapData: Swap | null = latestExecutedEntry
+    ? auditToSwap(latestExecutedEntry)
     : null;
 
   // ── Swap log (real audit entries only — empty when no live cycles) ────────────
@@ -336,6 +354,8 @@ export default function DashboardPage() {
     : [];
 
   // ── Spot holdings (from token balances — no 24h change available) ─────────────
+  const tokenBalancesEmpty =
+    snapshot !== null && Object.keys(snapshot.tokenBalances).length === 0;
   const holdingsData: SpotHolding[] = snapshot
     ? Object.entries(snapshot.tokenBalances)
         .filter((entry): entry is [string, { balance: number; valueUsd: number }] =>
@@ -353,23 +373,53 @@ export default function DashboardPage() {
         .sort((a, b) => b.valueUsd - a.valueUsd)
     : [];
 
-  // ── Allocation slices (from token balances) ───────────────────────────────────
-  const allocationData: AllocationSlice[] | null =
-    snapshot && snapshot.portfolioUsd > 0 && Object.keys(snapshot.tokenBalances).length > 0
-      ? Object.entries(snapshot.tokenBalances)
-          .filter(
-            (entry): entry is [string, { balance: number; valueUsd: number }] =>
-              entry[1] !== undefined && entry[1].valueUsd > 0,
-          )
-          .map(([asset, d]) => ({
-            asset: asset as AssetSymbol,
-            role: (ASSET_ROLES[asset] ?? "Volatile") as AssetRole,
-            pct: (d.valueUsd / snapshot.portfolioUsd) * 100,
-            valueUsd: d.valueUsd,
-            color: ASSET_COLORS[asset] ?? "#888",
-          }))
-          .sort((a, b) => b.pct - a.pct)
-      : null;
+  // Distinct partial message when snapshot exists but tokenBalances is empty
+  const holdingsEmptyMessage =
+    tokenBalancesEmpty && snapshot && snapshot.portfolioUsd > 0
+      ? "Partial snapshot — total value available; holdings unavailable"
+      : undefined;
+
+  // ── Allocation slices ─────────────────────────────────────────────────────────
+  // Priority 1: per-token breakdown from tokenBalances (most specific)
+  // Priority 2: role-bucket fallback from snapshot.allocation (when tokenBalances is empty)
+  // The Exposure card and Portfolio Value card read from the same snapshot source.
+  const allocationData: AllocationSlice[] | null = (() => {
+    if (!snapshot) return null;
+
+    // Per-token breakdown (most specific — shows individual assets)
+    const tokenEntries = Object.entries(snapshot.tokenBalances).filter(
+      (entry): entry is [string, { balance: number; valueUsd: number }] =>
+        entry[1] !== undefined && entry[1].valueUsd > 0,
+    );
+    if (tokenEntries.length > 0 && snapshot.portfolioUsd > 0) {
+      return tokenEntries
+        .map(([asset, d]) => ({
+          asset: asset as AssetSymbol,
+          role: (ASSET_ROLES[asset] ?? "Volatile") as AssetRole,
+          pct: (d.valueUsd / snapshot.portfolioUsd) * 100,
+          valueUsd: d.valueUsd,
+          color: ASSET_COLORS[asset] ?? "#888",
+        }))
+        .sort((a, b) => b.pct - a.pct);
+    }
+
+    // Role-bucket fallback: same source as Exposure card (snapshot.allocation)
+    // Uses representative symbols for coloring; legend shows role-bucket breakdown.
+    const { volatilePct, stablePct, gasPct } = snapshot.allocation;
+    const total = snapshot.portfolioUsd;
+    const roleBuckets: AllocationSlice[] = [];
+    if (volatilePct > 0)
+      roleBuckets.push({ asset: "ETH",  role: "Volatile", pct: volatilePct, valueUsd: (volatilePct / 100) * total, color: ASSET_COLORS.ETH });
+    if (stablePct > 0)
+      roleBuckets.push({ asset: "USDT", role: "Stable",   pct: stablePct,   valueUsd: (stablePct   / 100) * total, color: ASSET_COLORS.USDT });
+    if (gasPct > 0)
+      roleBuckets.push({ asset: "BNB",  role: "Gas",      pct: gasPct,      valueUsd: (gasPct      / 100) * total, color: ASSET_COLORS.BNB });
+
+    return roleBuckets.length > 0 ? roleBuckets.sort((a, b) => b.pct - a.pct) : null;
+  })();
+
+  // True when a snapshot exists but we couldn't produce any allocation slices
+  const allocationSnapshotAvailable = snapshot !== null && allocationData === null;
 
   // ── Market signals (derived from last audit cycle) ────────────────────────────
   const marketSignalsData: MarketSignals | null = agentData?.lastAuditEntry
@@ -398,13 +448,15 @@ export default function DashboardPage() {
   const riskScoreData: RiskScore | null =
     agentData?.lastAuditEntry?.riskScore ?? null;
 
-  // ── Drawdown (HWM from persistent state > snapshot; series always empty) ───────
+  // ── Drawdown (HWM from persistent state > snapshot; series from history) ────────
   const hwm =
     agentData?.state?.highWaterMarkUsd && agentData.state.highWaterMarkUsd > 0
       ? agentData.state.highWaterMarkUsd
       : snapshot?.hwm && snapshot.hwm > 0
       ? snapshot.hwm
       : 0;
+
+  const drawdownSeries: DrawdownPoint[] = portfolioData?.drawdownHistory ?? [];
 
   const drawdownData: DrawdownState | null =
     snapshot !== null || hwm > 0
@@ -413,9 +465,33 @@ export default function DashboardPage() {
           limitPct: DRAW_LIMIT_PCT,
           killSwitchPct: DRAW_KILL_PCT,
           highWaterMarkUsd: hwm,
-          series: [],
+          series: drawdownSeries,
         }
       : null;
+
+  // ── PnL (baseline from first real snapshot — write-once) ──────────────────────
+  // Baseline is only set from real (non-env) TWAK snapshots.
+  // Label: "24h PnL" only when snapshots are ~24h apart; otherwise honest window label.
+  const pnlBaseline = portfolioData?.pnlBaseline ?? null;
+  const pnlData: PnL | null =
+    pnlBaseline && snapshot && snapshot.portfolioUsd > 0
+      ? (() => {
+          const changeUsd = snapshot.portfolioUsd - pnlBaseline.firstSnapshotUsd;
+          const changePct =
+            pnlBaseline.firstSnapshotUsd > 0
+              ? (changeUsd / pnlBaseline.firstSnapshotUsd) * 100
+              : 0;
+          return {
+            totalUsd: changeUsd,
+            change24hPct: changePct,
+            realizedUsd: 0,         // per-trade realized PnL not tracked separately
+            unrealizedUsd: changeUsd,
+          };
+        })()
+      : null;
+  const pnlChangeLabel = pnlBaseline && snapshot
+    ? pickPnlLabel(pnlBaseline.firstSnapshotAt, snapshot.snapshotAt)
+    : "24h";
 
   // ── Proof trail (fixed real entries only) ─────────────────────────────────────
   const proofTrailData: ProofEntry[] = FIXED_PROOF_ENTRIES;
@@ -477,7 +553,7 @@ export default function DashboardPage() {
             isSimulation={isSimulation}
           />
         </div>
-        <PnLCard data={null} />
+        <PnLCard data={pnlData} changeLabel={pnlChangeLabel} />
         <ExposureCard
           data={exposureData}
           freshness={freshness}
@@ -492,9 +568,12 @@ export default function DashboardPage() {
         <MarketSignalsCard data={marketSignalsData} />
 
         {/* Row C: Allocation donut, Spot Holdings (2-wide), Risk Score */}
-        <PortfolioAllocationCard data={allocationData} />
+        <PortfolioAllocationCard
+          data={allocationData}
+          snapshotAvailable={allocationSnapshotAvailable}
+        />
         <div className="span-2">
-          <SpotHoldingsTable data={holdingsData} />
+          <SpotHoldingsTable data={holdingsData} emptyMessage={holdingsEmptyMessage} />
         </div>
         <RiskScoreBreakdownCard data={riskScoreData} />
 

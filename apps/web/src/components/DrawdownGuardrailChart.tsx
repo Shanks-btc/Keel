@@ -14,7 +14,8 @@ import { fmtTime } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
 export function DrawdownGuardrailChart({ data }: { data: DrawdownState | null }) {
-  if (!data) {
+  if (!data || data.series.length === 0) {
+    const msg = !data ? "Awaiting portfolio data" : "Awaiting portfolio history";
     return (
       <Card>
         <CardHeader title="Drawdown Guardrail" subtitle="HWM-relative · Kill-switch -18%" />
@@ -27,7 +28,7 @@ export function DrawdownGuardrailChart({ data }: { data: DrawdownState | null })
           }}
         >
           <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-            Awaiting portfolio data
+            {msg}
           </span>
         </div>
       </Card>

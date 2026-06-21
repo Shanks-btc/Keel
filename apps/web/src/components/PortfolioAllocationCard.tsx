@@ -12,13 +12,22 @@ import type { AllocationSlice } from "@keel/shared";
 import { fmtUsd } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
-export function PortfolioAllocationCard({ data }: { data: AllocationSlice[] | null }) {
+interface Props {
+  data: AllocationSlice[] | null;
+  /** True when a portfolio snapshot exists but allocation percentages are all zero. */
+  snapshotAvailable?: boolean;
+}
+
+export function PortfolioAllocationCard({ data, snapshotAvailable = false }: Props) {
   if (!data || data.length === 0) {
+    const msg = snapshotAvailable
+      ? "Partial snapshot — allocation unavailable"
+      : "Awaiting portfolio snapshot";
     return (
       <Card>
         <CardHeader title="Portfolio Allocation" />
         <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "8px 0" }}>
-          Awaiting portfolio snapshot
+          {msg}
         </div>
       </Card>
     );

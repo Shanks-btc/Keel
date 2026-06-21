@@ -8,7 +8,13 @@ const roleColors: Record<string, string> = {
   Gas: "#F0B90B",
 };
 
-export function SpotHoldingsTable({ data }: { data: SpotHolding[] }) {
+interface Props {
+  data: SpotHolding[];
+  /** Override the default empty-state message when snapshot exists but holdings are unavailable. */
+  emptyMessage?: string;
+}
+
+export function SpotHoldingsTable({ data, emptyMessage }: Props) {
   return (
     <Card>
       <CardHeader title="Spot Holdings" subtitle="Allowlist assets only · BNB = gas reserve" />
@@ -47,7 +53,7 @@ export function SpotHoldingsTable({ data }: { data: SpotHolding[] }) {
                     fontSize: "12px",
                   }}
                 >
-                  Awaiting portfolio snapshot
+                  {emptyMessage ?? "Awaiting portfolio snapshot"}
                 </td>
               </tr>
             )}

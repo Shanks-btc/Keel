@@ -2,7 +2,13 @@ import type { PnL } from "@keel/shared";
 import { fmtUsd, fmtPct, pctColor } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
-export function PnLCard({ data }: { data: PnL | null }) {
+interface Props {
+  data: PnL | null;
+  /** Label for the percentage-change line. Defaults to "24h". */
+  changeLabel?: string;
+}
+
+export function PnLCard({ data, changeLabel = "24h" }: Props) {
   if (!data) {
     return (
       <Card>
@@ -47,7 +53,7 @@ export function PnLCard({ data }: { data: PnL | null }) {
           marginBottom: "16px",
         }}
       >
-        {fmtPct(data.change24hPct)} 24h
+        {fmtPct(data.change24hPct)} {changeLabel}
       </div>
       <div
         style={{

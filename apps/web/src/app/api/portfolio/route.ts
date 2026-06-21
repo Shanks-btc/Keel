@@ -10,12 +10,17 @@
 //   LIVE        snapshot < 2h old + successful fetch this request
 //   STALE       snapshot 2-24h old, or TWAK failed but snapshot exists
 //   UNAVAILABLE no snapshot and no env vars
+//
+// Side-effects on successful real-data reads (source === "twak"):
+//   data/pnl-baseline.json    — written once, never overwritten (first real snapshot)
+//   data/drawdown-history.json — bounded 200-entry time series appended each read
 
 import { NextResponse } from "next/server";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 import { execSync } from "child_process";
-import type { PortfolioSnapshot, PortfolioFreshness } from "@keel/shared";
+import type { PortfolioSnapshot, PortfolioFreshness, DrawdownPoint } from "@keel/shared";
+import { applyDrawdownPoint, MAX_HISTORY } from "../../../lib/drawdown-history";
 
 export const dynamic = "force-dynamic";
 
@@ -31,6 +36,56 @@ const VOLATILE_SYMS = ["ETH", "CAKE", "LINK"] as const;
 let twakCache: { snapshot: PortfolioSnapshot; cachedAt: number } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+const BASELINE_FILE   = join(DATA_DIR, "pnl-baseline.json");
+const DD_HISTORY_FILE = join(DATA_DIR, "drawdown-history.json");
+
+// ── PnL baseline (write-once) ────────────────────────────────────────────────
+
+export interface PnlBaseline {
+  firstSnapshotUsd: number;
+  firstSnapshotAt: string;
+}
+
+function readBaseline(): PnlBaseline | null {
+  try {
+    return JSON.parse(readFileSync(BASELINE_FILE, "utf8")) as PnlBaseline;
+  } catch { return null; }
+}
+
+function persistBaselineOnce(usd: number, at: string): PnlBaseline | null {
+  try {
+    const existing = readBaseline();
+    if (existing) return existing;           // never overwrite
+    const baseline: PnlBaseline = { firstSnapshotUsd: usd, firstSnapshotAt: at };
+    writeFileSync(BASELINE_FILE, JSON.stringify(baseline, null, 2), "utf8");
+    return baseline;
+  } catch { return null; }
+}
+
+// ── Drawdown history (bounded 200-entry time series) ─────────────────────────
+
+function readDrawdownHistory(): DrawdownPoint[] {
+  try {
+    return JSON.parse(readFileSync(DD_HISTORY_FILE, "utf8")) as DrawdownPoint[];
+  } catch { return []; }
+}
+
+function appendDrawdownPoint(point: DrawdownPoint): DrawdownPoint[] {
+  try {
+    const history = readDrawdownHistory();
+    const updated = applyDrawdownPoint(history, point);
+    // Only write if something actually changed (dedup returns same ref when skipped)
+    if (updated !== history) {
+      writeFileSync(DD_HISTORY_FILE, JSON.stringify(updated, null, 2), "utf8");
+    }
+    return updated;
+  } catch {
+    return readDrawdownHistory();
+  }
+}
+
+// ── Snapshot file ─────────────────────────────────────────────────────────────
+
 function readSnapshotFile(): PortfolioSnapshot | null {
   try {
     return JSON.parse(
@@ -45,6 +100,8 @@ function parseEnvNum(key: string): number {
   const n = parseFloat(process.env[key] ?? "");
   return isNaN(n) ? 0 : n;
 }
+
+// ── CMC volatile prices ───────────────────────────────────────────────────────
 
 // Fetch USD prices for volatile allowlist tokens from CMC REST API.
 // Returns an empty Map on any failure — caller treats missing entries as $0.
@@ -79,6 +136,8 @@ async function fetchVolatilePrices(): Promise<Map<string, number>> {
   }
 }
 
+// ── TWAK balance query ────────────────────────────────────────────────────────
+
 // Real TWAK balance JSON shape (confirmed from live --json output):
 //   { chain, address, symbol: "BNB", available, total, totalUsd, tokens: [{symbol, contract, balance}] }
 // Notes:
@@ -91,7 +150,7 @@ async function fetchVolatilePrices(): Promise<Map<string, number>> {
 // BNB_WALLET_PASSWORD is never passed — balance reads are public BSC data.
 // On Windows, the CLI exits with code 9 (UV_HANDLE_CLOSING assertion) after writing valid JSON.
 // We handle this by extracting stdout from the thrown error object.
-function fetchTwakBalance(): PortfolioSnapshot | null {
+function fetchTwakBalance(): { snapshot: PortfolioSnapshot | null; error: string | null } {
   try {
     let raw = "";
     try {
@@ -101,18 +160,23 @@ function fetchTwakBalance(): PortfolioSnapshot | null {
       );
     } catch (e) {
       // Windows: process exits with code 9 after JSON is written — stdout still has the data.
-      const err = e as { stdout?: string | Buffer };
+      const err = e as { stdout?: string | Buffer; message?: string };
       raw = typeof err.stdout === "string"
         ? err.stdout
         : Buffer.isBuffer(err.stdout)
         ? err.stdout.toString("utf8")
         : "";
+      if (!raw) {
+        return { snapshot: null, error: `execSync failed: ${err.message ?? String(e)}` };
+      }
     }
 
     // Banner-tolerant JSON extraction (CLI may print a preamble before the JSON object)
     const jsonStart = raw.indexOf("{");
     const jsonEnd   = raw.lastIndexOf("}");
-    if (jsonStart === -1 || jsonEnd === -1) return null;
+    if (jsonStart === -1 || jsonEnd === -1) {
+      return { snapshot: null, error: `no JSON object found in TWAK output (${raw.length} chars)` };
+    }
 
     const parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)) as {
       symbol?:   string;           // native token: "BNB"
@@ -129,7 +193,12 @@ function fetchTwakBalance(): PortfolioSnapshot | null {
     const nativeSym = (parsed.symbol ?? "BNB").toUpperCase();
     const nativeBal = parseFloat(parsed.total ?? "0");
     const nativeUsd = typeof parsed.totalUsd === "number" ? parsed.totalUsd : 0;
-    if (isNaN(nativeBal) || nativeUsd <= 0) return null;
+    if (isNaN(nativeBal) || nativeUsd <= 0) {
+      return {
+        snapshot: null,
+        error: `invalid native balance: total=${String(parsed.total)}, totalUsd=${String(parsed.totalUsd)}`,
+      };
+    }
 
     const tokenBalances: PortfolioSnapshot["tokenBalances"] = {};
     let stableUsd = 0;
@@ -153,24 +222,29 @@ function fetchTwakBalance(): PortfolioSnapshot | null {
     const portfolioUsd = nativeUsd + stableUsd;
 
     return {
-      snapshotAt: new Date().toISOString(),
-      portfolioUsd,
-      tokenBalances,
-      allocation: {
-        volatilePct: 0,
-        stablePct:   portfolioUsd > 0 ? (stableUsd  / portfolioUsd) * 100 : 0,
-        gasPct:      portfolioUsd > 0 ? (nativeUsd  / portfolioUsd) * 100 : 0,
+      snapshot: {
+        snapshotAt: new Date().toISOString(),
+        portfolioUsd,
+        tokenBalances,
+        allocation: {
+          volatilePct: 0,
+          stablePct:   portfolioUsd > 0 ? (stableUsd  / portfolioUsd) * 100 : 0,
+          gasPct:      portfolioUsd > 0 ? (nativeUsd  / portfolioUsd) * 100 : 0,
+        },
+        hwm: 0,
+        currentDrawdownPct: 0,
+        lastBscTxHash: null,
+        lastCycleResult: null,
+        source: "twak",
       },
-      hwm: 0,
-      currentDrawdownPct: 0,
-      lastBscTxHash: null,
-      lastCycleResult: null,
-      source: "twak",
+      error: null,
     };
-  } catch {
-    return null;
+  } catch (e) {
+    return { snapshot: null, error: String(e) };
   }
 }
+
+// ── CMC price enrichment ──────────────────────────────────────────────────────
 
 // Apply CMC prices to volatile token holdings and recalculate portfolioUsd + allocation.
 // Returns a new snapshot object — does not mutate the input.
@@ -223,33 +297,86 @@ function computeFreshness(snapshotAt: string): PortfolioFreshness {
   return "UNAVAILABLE";
 }
 
+// ── GET handler ───────────────────────────────────────────────────────────────
+
 export async function GET() {
+  let pnlBaseline: PnlBaseline | null = null;
+  let drawdownHistory: DrawdownPoint[] = readDrawdownHistory();
+
   // 1. Try TWAK balance (with 5-min cache)
   const now = Date.now();
   if (twakCache && now - twakCache.cachedAt < CACHE_TTL_MS) {
     const freshness = computeFreshness(twakCache.snapshot.snapshotAt);
-    return NextResponse.json({ ok: true, snapshot: twakCache.snapshot, freshness, source: "twak-cache" });
+    pnlBaseline = readBaseline();
+    return NextResponse.json({
+      ok: true,
+      snapshot: twakCache.snapshot,
+      freshness,
+      source: "twak-cache",
+      pnlBaseline,
+      drawdownHistory,
+    });
   }
 
   // Start CMC price fetch BEFORE the blocking execSync in fetchTwakBalance().
   // The HTTP request goes in-flight at the OS level even while execSync holds the JS thread,
   // so by the time execSync returns the CMC response is likely already received.
   const pricePromise = fetchVolatilePrices();
-  const twakSnapshot = fetchTwakBalance();
+
+  console.log("[portfolio] attempting live TWAK balance query");
+  const { snapshot: twakSnapshot, error: twakError } = fetchTwakBalance();
   const volatilePrices = await pricePromise;
 
   if (twakSnapshot) {
     const enriched = applyVolatilePrices(twakSnapshot, volatilePrices);
+    const tokenCount = Object.keys(enriched.tokenBalances).length;
+    console.log(
+      `[portfolio] live query succeeded, ${tokenCount} token${tokenCount !== 1 ? "s" : ""}, totalUsd=$${enriched.portfolioUsd.toFixed(2)}`,
+    );
     twakCache = { snapshot: enriched, cachedAt: now };
-    return NextResponse.json({ ok: true, snapshot: enriched, freshness: "LIVE" as PortfolioFreshness, source: "twak" });
+
+    // Persist baseline (first real snapshot only) and append to history
+    pnlBaseline = persistBaselineOnce(enriched.portfolioUsd, enriched.snapshotAt);
+    drawdownHistory = appendDrawdownPoint({
+      timestamp: enriched.snapshotAt,
+      drawdownPct: enriched.currentDrawdownPct,
+    });
+
+    return NextResponse.json({
+      ok: true,
+      snapshot: enriched,
+      freshness: "LIVE" as PortfolioFreshness,
+      source: "twak",
+      pnlBaseline,
+      drawdownHistory,
+    });
   }
+
+  console.log(`[portfolio] live query failed: ${twakError ?? "unknown error"}`);
 
   // 2. Fall back to portfolio-snapshot.json (written by runner)
   const fileSnapshot = readSnapshotFile();
   if (fileSnapshot) {
     const freshness = computeFreshness(fileSnapshot.snapshotAt);
     if (freshness !== "UNAVAILABLE") {
-      return NextResponse.json({ ok: true, snapshot: fileSnapshot, freshness, source: "snapshot" });
+      // Only persist baseline/history from runner snapshots that came from TWAK (real data)
+      if (fileSnapshot.source === "twak") {
+        pnlBaseline = persistBaselineOnce(fileSnapshot.portfolioUsd, fileSnapshot.snapshotAt);
+        drawdownHistory = appendDrawdownPoint({
+          timestamp: fileSnapshot.snapshotAt,
+          drawdownPct: fileSnapshot.currentDrawdownPct,
+        });
+      } else {
+        pnlBaseline = readBaseline();
+      }
+      return NextResponse.json({
+        ok: true,
+        snapshot: fileSnapshot,
+        freshness,
+        source: "snapshot",
+        pnlBaseline,
+        drawdownHistory,
+      });
     }
   }
 
@@ -274,9 +401,25 @@ export async function GET() {
       lastCycleResult: null,
       source: "env",
     };
-    return NextResponse.json({ ok: true, snapshot: envSnapshot, freshness: "STALE" as PortfolioFreshness, source: "env" });
+    pnlBaseline = readBaseline();  // read-only for env snapshots — never update baseline from env
+    return NextResponse.json({
+      ok: true,
+      snapshot: envSnapshot,
+      freshness: "STALE" as PortfolioFreshness,
+      source: "env",
+      pnlBaseline,
+      drawdownHistory,
+    });
   }
 
   // 4. Nothing available
-  return NextResponse.json({ ok: true, snapshot: null, freshness: "UNAVAILABLE" as PortfolioFreshness, source: "none" });
+  pnlBaseline = readBaseline();
+  return NextResponse.json({
+    ok: true,
+    snapshot: null,
+    freshness: "UNAVAILABLE" as PortfolioFreshness,
+    source: "none",
+    pnlBaseline,
+    drawdownHistory,
+  });
 }
