@@ -20,7 +20,7 @@ export type RiskMode = "Risk-on" | "Neutral" | "Risk-off";
 
 export type SwapAction = "Buy" | "Sell" | "Rebalance" | "Hold";
 
-export type HealthStatus = "ok" | "warn" | "error";
+export type HealthStatus = "ok" | "warn" | "error" | "not_yet_verified";
 
 // ── Portfolio value ─────────────────────────────────────────────────────────
 
@@ -61,7 +61,7 @@ export interface SpotHolding {
   balance: number;
   valueUsd: number;
   allocationPct: number;
-  change24hPct: number;
+  change24hPct: number | null;
 }
 
 // ── Allocation (donut) ───────────────────────────────────────────────────────

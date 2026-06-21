@@ -12,7 +12,18 @@ import type { AllocationSlice } from "@keel/shared";
 import { fmtUsd } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
-export function PortfolioAllocationCard({ data }: { data: AllocationSlice[] }) {
+export function PortfolioAllocationCard({ data }: { data: AllocationSlice[] | null }) {
+  if (!data || data.length === 0) {
+    return (
+      <Card>
+        <CardHeader title="Portfolio Allocation" />
+        <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "8px 0" }}>
+          Awaiting portfolio snapshot
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader title="Portfolio Allocation" />

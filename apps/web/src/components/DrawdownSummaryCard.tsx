@@ -2,7 +2,29 @@ import type { DrawdownState } from "@keel/shared";
 import { fmtUsd } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
-export function DrawdownSummaryCard({ data }: { data: DrawdownState }) {
+export function DrawdownSummaryCard({ data }: { data: DrawdownState | null }) {
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader title="Current Drawdown" />
+        <div
+          style={{
+            fontSize: "28px",
+            fontWeight: 700,
+            fontFamily: "monospace",
+            color: "var(--text-muted)",
+            marginBottom: "4px",
+          }}
+        >
+          —
+        </div>
+        <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+          Awaiting portfolio snapshot
+        </div>
+      </Card>
+    );
+  }
+
   const pct = data.currentPct;
   const atKillSwitch = pct <= data.killSwitchPct;
   const atLimit = pct <= data.limitPct;
@@ -39,7 +61,7 @@ export function DrawdownSummaryCard({ data }: { data: DrawdownState }) {
           fontFamily: "monospace",
         }}
       >
-        HWM {fmtUsd(data.highWaterMarkUsd)}
+        HWM {data.highWaterMarkUsd > 0 ? fmtUsd(data.highWaterMarkUsd) : "—"}
       </div>
 
       {/* Progress bar toward kill-switch */}

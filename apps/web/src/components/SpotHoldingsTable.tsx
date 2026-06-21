@@ -36,6 +36,21 @@ export function SpotHoldingsTable({ data }: { data: SpotHolding[] }) {
             </tr>
           </thead>
           <tbody>
+            {data.length === 0 && (
+              <tr>
+                <td
+                  colSpan={6}
+                  style={{
+                    padding: "24px 8px",
+                    textAlign: "center",
+                    color: "var(--text-muted)",
+                    fontSize: "12px",
+                  }}
+                >
+                  Awaiting portfolio snapshot
+                </td>
+              </tr>
+            )}
             {data.map((row, i) => (
               <tr
                 key={row.asset}
@@ -75,10 +90,10 @@ export function SpotHoldingsTable({ data }: { data: SpotHolding[] }) {
                     padding: "10px 8px",
                     textAlign: "right",
                     fontFamily: "monospace",
-                    color: pctColor(row.change24hPct),
+                    color: row.change24hPct !== null ? pctColor(row.change24hPct) : "var(--text-muted)",
                   }}
                 >
-                  {fmtPct(row.change24hPct, 2)}
+                  {row.change24hPct !== null ? fmtPct(row.change24hPct, 2) : "—"}
                 </td>
               </tr>
             ))}

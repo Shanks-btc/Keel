@@ -10,7 +10,18 @@ function fg(value: number): string {
   return "var(--green)";
 }
 
-export function MarketSignalsCard({ data }: { data: MarketSignals }) {
+export function MarketSignalsCard({ data }: { data: MarketSignals | null }) {
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader title="Market Signals" subtitle="ETH · Live" />
+        <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "8px 0" }}>
+          Awaiting first live cycle
+        </div>
+      </Card>
+    );
+  }
+
   const trendColor =
     data.trend === "Bullish"
       ? "var(--green)"
@@ -41,7 +52,7 @@ export function MarketSignalsCard({ data }: { data: MarketSignals }) {
             fontFamily: "monospace",
           }}
         >
-          {fmtUsd(data.assetPrice)}
+          {data.assetPrice > 0 ? fmtUsd(data.assetPrice) : "—"}
         </span>
         <span
           style={{

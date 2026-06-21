@@ -127,7 +127,9 @@ export function TopTradingBar({
 
         {/* Last updated */}
         <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-          Updated {fmtRelative(lastUpdated)}
+          {lastUpdated && !isNaN(new Date(lastUpdated).getTime())
+            ? `Updated ${fmtRelative(lastUpdated)}`
+            : "Awaiting first runner update"}
         </div>
       </div>
 

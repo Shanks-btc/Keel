@@ -13,8 +13,31 @@ import type { DrawdownState } from "@keel/shared";
 import { fmtTime } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
-export function DrawdownGuardrailChart({ data }: { data: DrawdownState }) {
-  const minY = Math.min(data.killSwitchPct - 2, ...data.series.map((d) => d.drawdownPct));
+export function DrawdownGuardrailChart({ data }: { data: DrawdownState | null }) {
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader title="Drawdown Guardrail" subtitle="HWM-relative · Kill-switch -18%" />
+        <div
+          style={{
+            height: "160px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+            Awaiting portfolio data
+          </span>
+        </div>
+      </Card>
+    );
+  }
+
+  const minY =
+    data.series.length > 0
+      ? Math.min(data.killSwitchPct - 2, ...data.series.map((d) => d.drawdownPct))
+      : data.killSwitchPct - 2;
 
   return (
     <Card>

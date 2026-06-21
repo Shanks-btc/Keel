@@ -2,7 +2,18 @@ import type { RiskScore } from "@keel/shared";
 import { modeColor } from "../lib/format";
 import { Card, CardHeader } from "./ui/Card";
 
-export function RiskScoreBreakdownCard({ data }: { data: RiskScore }) {
+export function RiskScoreBreakdownCard({ data }: { data: RiskScore | null }) {
+  if (!data) {
+    return (
+      <Card>
+        <CardHeader title="Risk Score" subtitle="3 components — as computed" />
+        <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "8px 0" }}>
+          Awaiting first live cycle
+        </div>
+      </Card>
+    );
+  }
+
   const modeCol = modeColor(data.mode);
 
   return (

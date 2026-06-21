@@ -64,7 +64,7 @@ export function modeColor(mode: string): string {
   return "var(--amber)";
 }
 
-export function healthColor(status: "ok" | "warn" | "error"): string {
+export function healthColor(status: "ok" | "warn" | "error" | "not_yet_verified"): string {
   if (status === "ok") return "var(--green)";
   if (status === "warn") return "var(--amber)";
   return "var(--red)";

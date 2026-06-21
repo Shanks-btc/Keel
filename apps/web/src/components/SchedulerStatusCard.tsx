@@ -4,6 +4,7 @@
 
 "use client";
 
+import { useState, useEffect } from "react";
 import type { DayAttemptEntry, AgentPersistentState } from "@keel/shared";
 import { Card, CardHeader } from "./ui/Card";
 import { fmtUsd, fmtDateTime } from "../lib/format";
@@ -79,10 +80,34 @@ function StatusBadge({ status }: { status: DayAttemptEntry["status"] | null }) {
 }
 
 export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
+  // Timeout fallback: if the fetch hangs, stop showing Loading after 5 s.
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+  useEffect(() => {
+    if (!isLoading || state !== null) { setLoadTimedOut(false); return; }
+    const t = setTimeout(() => setLoadTimedOut(true), 5_000);
+    return () => clearTimeout(t);
+  }, [isLoading, state]);
+
+  // ── STATE 1: Loading (in-flight, no prior state, within 5 s timeout) ─────────
+  if (isLoading && state === null && !loadTimedOut) {
+    return (
+      <Card>
+        <CardHeader
+          title="Daily Qualification Scheduler"
+          subtitle="minimum-risk qualifying attempt"
+        />
+        <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "8px 0" }}>
+          Loading…
+        </div>
+      </Card>
+    );
+  }
+
+  // ── STATES 2 & 3: data available (state non-null) OR empty (null / timed out) ─
   const todayEntry = state?.dayLedger[todayKey] ?? null;
   const hwm = state?.highWaterMarkUsd ?? 0;
 
-  // Compute rolling 24h deadline status — warning-only, no gate.
+  // Compute 24h deadline status — warning-only indicator, no execution gate.
   const lastQualAt = state?.lastQualifyingTradeAt ?? null;
   let deadlineStatus: DeadlineStatus = "UNKNOWN";
   let nextDeadlineLabel: string | null = null;
@@ -107,120 +132,114 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
     <Card>
       <CardHeader
         title="Daily Qualification Scheduler"
-        subtitle="minimum-risk qualifying attempt · once per calendar day"
+        subtitle="minimum-risk qualifying attempt"
       />
 
-      {isLoading ? (
-        <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "8px 0" }}>
-          Loading…
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: "12px",
+          marginBottom: "14px",
+        }}
+      >
+        <div>
+          <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
+            Today ({todayKey})
+          </div>
+          <StatusBadge status={todayEntry?.status ?? null} />
+        </div>
+        <div>
+          <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
+            High-water mark
+          </div>
+          <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>
+            {hwm > 0 ? fmtUsd(hwm) : "—"}
+          </span>
+        </div>
+      </div>
+
+      {/* 24h safety check */}
+      {deadlineStatus !== "UNKNOWN" && (
+        <div style={{ marginBottom: "14px" }}>
+          <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
+            24h safety check
+          </div>
+          <DeadlineBadge status={deadlineStatus} nextDeadlineLabel={nextDeadlineLabel} />
+        </div>
+      )}
+
+      {todayEntry ? (
+        <div
+          style={{
+            fontSize: "11px",
+            color: "var(--text-secondary)",
+            lineHeight: "1.6",
+            paddingBottom: "10px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          {todayEntry.action && (
+            <div>
+              Action:{" "}
+              <strong style={{ color: "var(--text-primary)" }}>{todayEntry.action}</strong>
+            </div>
+          )}
+          {todayEntry.txHash && (
+            <div>
+              Tx:{" "}
+              <a
+                href={`https://bscscan.com/tx/${todayEntry.txHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  color: "var(--blue)",
+                  fontFamily: "monospace",
+                  textDecoration: "none",
+                }}
+              >
+                {todayEntry.txHash.slice(0, 12)}… ↗
+              </a>
+            </div>
+          )}
+          {todayEntry.blockedReason && (
+            <div style={{ color: "var(--red)" }}>
+              Blocked: {todayEntry.blockedReason}
+            </div>
+          )}
+          <div style={{ color: "var(--text-muted)", marginTop: "2px" }}>
+            {fmtDateTime(todayEntry.timestamp)}
+          </div>
         </div>
       ) : (
-        <>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: "12px",
-              marginBottom: "14px",
-            }}
-          >
-            <div>
-              <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
-                Today ({todayKey})
-              </div>
-              <StatusBadge status={todayEntry?.status ?? null} />
-            </div>
-            <div>
-              <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
-                High-water mark
-              </div>
-              <span
-                style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}
-              >
-                {hwm > 0 ? fmtUsd(hwm) : "—"}
-              </span>
-            </div>
-          </div>
-
-          {/* Rolling 24h safety check */}
-          {deadlineStatus !== "UNKNOWN" && (
-            <div style={{ marginBottom: "14px" }}>
-              <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
-                rolling 24-hour safety check
-              </div>
-              <DeadlineBadge status={deadlineStatus} nextDeadlineLabel={nextDeadlineLabel} />
-            </div>
-          )}
-
-          {todayEntry ? (
-            <div
-              style={{
-                fontSize: "11px",
-                color: "var(--text-secondary)",
-                lineHeight: "1.6",
-                paddingBottom: "10px",
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              {todayEntry.action && (
-                <div>
-                  Action:{" "}
-                  <strong style={{ color: "var(--text-primary)" }}>{todayEntry.action}</strong>
-                </div>
-              )}
-              {todayEntry.txHash && (
-                <div>
-                  Tx:{" "}
-                  <a
-                    href={`https://bscscan.com/tx/${todayEntry.txHash}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      color: "var(--blue)",
-                      fontFamily: "monospace",
-                      textDecoration: "none",
-                    }}
-                  >
-                    {todayEntry.txHash.slice(0, 12)}… ↗
-                  </a>
-                </div>
-              )}
-              {todayEntry.blockedReason && (
-                <div style={{ color: "var(--red)" }}>
-                  Blocked: {todayEntry.blockedReason}
-                </div>
-              )}
-              <div style={{ color: "var(--text-muted)", marginTop: "2px" }}>
-                {fmtDateTime(todayEntry.timestamp)}
-              </div>
-            </div>
-          ) : (
-            <div
-              style={{
-                fontSize: "11px",
-                color: "var(--text-muted)",
-                paddingBottom: "10px",
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
-              No qualifying attempt recorded today. The scheduler runs once per calendar day.
-            </div>
-          )}
-
-          <div
-            style={{
-              marginTop: "10px",
-              fontSize: "10px",
-              color: "var(--text-muted)",
-              lineHeight: "1.4",
-            }}
-          >
-            Fallback: drawdown-neutral stable-to-stable swap if the primary rotation
-            is unavailable. Not guaranteed unless organizers confirm stable-to-stable counts.
-            drawdown-resistant design — kill-switch and all safety gates remain active.
-          </div>
-        </>
+        <div
+          style={{
+            fontSize: "11px",
+            color: "var(--text-muted)",
+            paddingBottom: "10px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          Qualification status: No qualifying attempt recorded yet.
+          <br />
+          <span style={{ fontSize: "10px" }}>
+            Cadence confirmation pending organizer clarification.
+          </span>
+        </div>
       )}
+
+      <div
+        style={{
+          marginTop: "10px",
+          fontSize: "10px",
+          color: "var(--text-muted)",
+          lineHeight: "1.4",
+        }}
+      >
+        Fallback: drawdown-neutral stable-to-stable swap if the primary rotation
+        is unavailable. Not guaranteed unless organizers confirm stable-to-stable counts.
+        drawdown-resistant design — kill-switch and all safety gates remain active.
+      </div>
     </Card>
   );
 }

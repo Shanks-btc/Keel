@@ -1,8 +1,13 @@
-import type { AgentState } from "@keel/shared";
-import { fmtUsd, fmtPct, pctColor } from "../lib/format";
+import type { Exposure, Swap } from "@keel/shared";
+import { fmtUsd } from "../lib/format";
 
 interface Props {
-  state: AgentState;
+  portfolioUsd: number | null;
+  exposureData: Exposure | null;
+  latestSwap: Swap | null;
+  drawdownPct: number | null;
+  limitPct: number;
+  killSwitchPct: number;
 }
 
 interface SummaryItemProps {
@@ -67,9 +72,14 @@ function SummaryItem({ label, value, sub, subColor, mono }: SummaryItemProps) {
   );
 }
 
-export function TradingSummaryRow({ state }: Props) {
-  const { portfolioValue, pnl, exposure, latestSwap, drawdown } = state;
-
+export function TradingSummaryRow({
+  portfolioUsd,
+  exposureData,
+  latestSwap,
+  drawdownPct,
+  limitPct,
+  killSwitchPct,
+}: Props) {
   return (
     <div
       style={{
@@ -81,38 +91,40 @@ export function TradingSummaryRow({ state }: Props) {
     >
       <SummaryItem
         label="Portfolio Value"
-        value={fmtUsd(portfolioValue.currentUsd)}
-        sub={`${fmtPct(portfolioValue.change24hPct)} 24h`}
-        subColor={pctColor(portfolioValue.change24hPct)}
+        value={portfolioUsd !== null ? fmtUsd(portfolioUsd) : "—"}
+        sub={portfolioUsd !== null ? "live snapshot" : "awaiting snapshot"}
         mono
       />
       <SummaryItem
         label="24h PnL"
-        value={fmtUsd(pnl.totalUsd)}
-        sub={`${fmtUsd(pnl.realizedUsd)} realized · ${fmtUsd(pnl.unrealizedUsd)} unrealized`}
-        subColor={pctColor(pnl.totalUsd)}
+        value="—"
+        sub="not available"
         mono
       />
       <SummaryItem
         label="Volatile Exposure"
-        value={`${exposure.volatilePct}%`}
-        sub={`${exposure.stablePct}% stable · ${exposure.gasPct}% gas`}
+        value={exposureData ? `${exposureData.volatilePct.toFixed(1)}%` : "—"}
+        sub={
+          exposureData
+            ? `${exposureData.stablePct.toFixed(1)}% stable · ${exposureData.gasPct.toFixed(1)}% gas`
+            : "awaiting snapshot"
+        }
         mono
       />
       <SummaryItem
         label="Latest Swap"
-        value={`${latestSwap.fromAsset} → ${latestSwap.toAsset}`}
-        sub={fmtUsd(latestSwap.valueUsd)}
+        value={latestSwap ? `${latestSwap.fromAsset} → ${latestSwap.toAsset}` : "—"}
+        sub={latestSwap ? fmtUsd(latestSwap.valueUsd) : "no live trades yet"}
         mono
       />
       <SummaryItem
         label="Current Drawdown"
-        value={`${drawdown.currentPct.toFixed(1)}%`}
-        sub={`Limit ${drawdown.limitPct}% · Kill-switch ${drawdown.killSwitchPct}%`}
+        value={drawdownPct !== null ? `${drawdownPct.toFixed(1)}%` : "—"}
+        sub={`Limit ${limitPct}% · Kill-switch ${killSwitchPct}%`}
         subColor={
-          drawdown.currentPct < drawdown.killSwitchPct
+          drawdownPct !== null && drawdownPct < killSwitchPct
             ? "var(--red)"
-            : drawdown.currentPct < drawdown.limitPct
+            : drawdownPct !== null && drawdownPct < limitPct
             ? "var(--amber)"
             : "var(--text-muted)"
         }

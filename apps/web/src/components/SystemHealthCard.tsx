@@ -6,6 +6,7 @@ const statusLabels: Record<string, string> = {
   ok: "OK",
   warn: "WARN",
   error: "ERR",
+  not_yet_verified: "—",
 };
 
 export function SystemHealthCard({ data }: { data: HealthItem[] }) {
