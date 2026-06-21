@@ -85,6 +85,31 @@ console.log(`[keel server] Data directory writable: ${writable}`);
   );
 })();
 
+// ── Boot-time password scrub ──────────────────────────────────────────────────
+// Redacts any leaked --password <value> strings from persisted data files.
+// This runs synchronously before cycles start.
+
+(function scrubDataFiles() {
+  const PATTERN = /--password\s+\S+/g;
+  const REDACTED = "--password <redacted>";
+  const targets = [
+    path.join(dataDir, "agent-state.json"),
+    path.join(dataDir, "audit.jsonl"),
+  ];
+  for (const filePath of targets) {
+    try {
+      const original = fs.readFileSync(filePath, "utf8");
+      if (!PATTERN.test(original)) continue;
+      PATTERN.lastIndex = 0; // reset after test()
+      const scrubbed = original.replace(PATTERN, REDACTED);
+      fs.writeFileSync(filePath, scrubbed, "utf8");
+      console.log(`[keel server] Scrubbed --password leak from ${path.basename(filePath)}`);
+    } catch {
+      // File doesn't exist or unreadable — not an error
+    }
+  }
+})();
+
 // ── Cycle runner ──────────────────────────────────────────────────────────────
 
 function runCycle() {

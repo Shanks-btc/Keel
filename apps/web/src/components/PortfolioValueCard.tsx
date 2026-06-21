@@ -70,9 +70,9 @@ export function PortfolioValueCard({ data, freshness, isSimulation }: Props) {
       </div>
       {isSimulation ? (
         <div style={{ fontSize: "11px", color: "var(--amber)", marginBottom: "12px" }}>
-          From env vars — no live wallet data available
+          Configured estimate — not live wallet data
         </div>
-      ) : (
+      ) : data.change24hPct !== 0 ? (
         <div
           style={{
             fontSize: "13px",
@@ -82,6 +82,10 @@ export function PortfolioValueCard({ data, freshness, isSimulation }: Props) {
           }}
         >
           {fmtPct(data.change24hPct)} · {fmtUsd(data.change24hUsd)} today
+        </div>
+      ) : (
+        <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "12px" }}>
+          Current wallet value — no PnL baseline yet
         </div>
       )}
       {data.series.length > 0 && (

@@ -61,7 +61,7 @@ export function DrawdownSummaryCard({ data }: { data: DrawdownState | null }) {
           fontFamily: "monospace",
         }}
       >
-        HWM {data.highWaterMarkUsd > 0 ? fmtUsd(data.highWaterMarkUsd) : "—"}
+        Drawdown from high-water mark · HWM {data.highWaterMarkUsd > 0 ? fmtUsd(data.highWaterMarkUsd) : "—"}
       </div>
 
       {/* Progress bar toward kill-switch */}

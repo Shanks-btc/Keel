@@ -124,6 +124,13 @@ async function fetchLiveSnapshot(): Promise<typeof FALLBACK_SNAPSHOT | null> {
   }
 }
 
+// Gate results for preview — use the same structure as DrawdownGateResult for consistency
+interface PreviewGate {
+  ok: boolean;
+  guardName: string;
+  reason: string;
+}
+
 export async function GET(request: NextRequest) {
   const direction = new URL(request.url).searchParams.get("direction");
   const state = readState();
@@ -136,6 +143,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       direction: "to-stable",
+      previewLabel: "Preview only — no wallet signing and no BSC transaction submitted",
       priceIsSimulation: true,
       proposal: {
         fromAsset: "ETH",
@@ -153,9 +161,11 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Standard cycle preview ────────────────────────────────────────────────
+  const fetchedAt = new Date().toISOString();
   const liveSnapshot = await fetchLiveSnapshot();
   const snapshot = liveSnapshot ?? FALLBACK_SNAPSHOT;
   const priceIsSimulation = liveSnapshot === null;
+  const dataSource: "live" | "fallback" = liveSnapshot ? "live" : "fallback";
 
   const R = computeR(snapshot.change1h, snapshot.change24h, snapshot.fearGreed);
   const { mode, targetVolatilePct } = pickMode(R);
@@ -173,12 +183,69 @@ export async function GET(request: NextRequest) {
   }
 
   const portfolioPreview = 10_000;
-  const tradePreview = portfolioPreview * 0.25;
+  const tradePreview = portfolioPreview * 0.25; // 25% per-trade cap applied
   const volatilePreview = 45;
   const drawdownGate = checkDrawdownGate(drawdownPct, volatilePreview, tradePreview, portfolioPreview, false);
 
+  // ── Kill-switch gate ──────────────────────────────────────────────────────
+  const killSwitchGate: PreviewGate = drawdownPct <= -25
+    ? {
+        ok: false,
+        guardName: "kill-switch",
+        reason: `kill-switch triggered: drawdown ${drawdownPct.toFixed(2)}% ≤ -25% — no trades permitted`,
+      }
+    : {
+        ok: true,
+        guardName: "kill-switch",
+        reason: `drawdown ${drawdownPct.toFixed(2)}% above kill-switch threshold (-25%)`,
+      };
+
+  // ── Allowlist gate ────────────────────────────────────────────────────────
+  // Eligible trading assets: ETH, CAKE, LINK (volatile); USDT, USDC, USD1, FDUSD (stable).
+  // BNB is gas-only and never traded. Standard preview targets ETH ↔ USDT.
+  const allowlistGate: PreviewGate = {
+    ok: true,
+    guardName: "allowlist",
+    reason: "ETH and USDT are both on the trading allowlist — preview trade is eligible",
+  };
+
+  // ── Per-trade cap gate ────────────────────────────────────────────────────
+  // Maximum per-trade size is 25% of portfolio value.
+  const tradeCapPct = portfolioPreview > 0 ? (tradePreview / portfolioPreview) * 100 : 0;
+  const perTradeCapGate: PreviewGate = tradeCapPct <= 25
+    ? {
+        ok: true,
+        guardName: "per-trade-cap",
+        reason: `preview trade ${tradeCapPct.toFixed(1)}% of portfolio — within 25% per-trade cap`,
+      }
+    : {
+        ok: false,
+        guardName: "per-trade-cap",
+        reason: `preview trade ${tradeCapPct.toFixed(1)}% of portfolio — exceeds 25% per-trade cap`,
+      };
+
+  // ── Slippage gate ─────────────────────────────────────────────────────────
+  // Configured max slippage is 1%. Without a live quote we cannot verify realized slippage.
+  const slippageGate: PreviewGate = {
+    ok: true,
+    guardName: "slippage",
+    reason: "configured max slippage 1.0% — not verified without live quote; checked at execution time",
+  };
+
+  // ── Outcome ──────────────────────────────────────────────────────────────
+  const allGatesPass =
+    killSwitchGate.ok && allowlistGate.ok && perTradeCapGate.ok && drawdownGate.ok;
+  const outcome = !allGatesPass
+    ? "PREVIEW BLOCKED"
+    : state?.riskOffOverride?.active
+    ? "PREVIEW BLOCKED: risk-off override active"
+    : "PREVIEW ALLOWED";
+
   return NextResponse.json({
     ok: true,
+    previewLabel: "Preview only — no wallet signing and no BSC transaction submitted",
+    dataSource,
+    priceTimestamp: fetchedAt,
     priceIsSimulation,
     snapshot,
     R: +R.toFixed(4),
@@ -189,7 +256,12 @@ export async function GET(request: NextRequest) {
     overlaysApplied,
     drawdownPct,
     hwmUsd,
+    killSwitchGate,
+    allowlistGate,
+    perTradeCapGate,
+    slippageGate,
     drawdownGate,
+    outcome,
     dayLedger: state?.dayLedger ?? {},
     riskOffOverride: state?.riskOffOverride ?? null,
   });

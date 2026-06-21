@@ -6,7 +6,7 @@ export function PnLCard({ data }: { data: PnL | null }) {
   if (!data) {
     return (
       <Card>
-        <CardHeader title="24h PnL" />
+        <CardHeader title="PnL" />
         <div
           style={{
             fontSize: "28px",
@@ -27,7 +27,7 @@ export function PnLCard({ data }: { data: PnL | null }) {
 
   return (
     <Card>
-      <CardHeader title="24h PnL" />
+      <CardHeader title="PnL" />
       <div
         style={{
           fontSize: "28px",

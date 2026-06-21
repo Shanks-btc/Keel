@@ -3,6 +3,7 @@ import { fmtUsd } from "../lib/format";
 
 interface Props {
   portfolioUsd: number | null;
+  portfolioSource?: string | null;
   exposureData: Exposure | null;
   latestSwap: Swap | null;
   drawdownPct: number | null;
@@ -74,12 +75,24 @@ function SummaryItem({ label, value, sub, subColor, mono }: SummaryItemProps) {
 
 export function TradingSummaryRow({
   portfolioUsd,
+  portfolioSource,
   exposureData,
   latestSwap,
   drawdownPct,
   limitPct,
   killSwitchPct,
 }: Props) {
+  const portfolioSub =
+    portfolioUsd === null
+      ? "awaiting snapshot"
+      : portfolioSource === "twak" || portfolioSource === "twak-cache"
+      ? "live wallet balance"
+      : portfolioSource === "snapshot"
+      ? "runner snapshot"
+      : portfolioSource === "env"
+      ? "configured estimate (sim)"
+      : "awaiting snapshot";
+
   return (
     <div
       style={{
@@ -92,13 +105,13 @@ export function TradingSummaryRow({
       <SummaryItem
         label="Portfolio Value"
         value={portfolioUsd !== null ? fmtUsd(portfolioUsd) : "—"}
-        sub={portfolioUsd !== null ? "live snapshot" : "awaiting snapshot"}
+        sub={portfolioSub}
         mono
       />
       <SummaryItem
-        label="24h PnL"
+        label="PnL"
         value="—"
-        sub="not available"
+        sub="awaiting first live cycle"
         mono
       />
       <SummaryItem

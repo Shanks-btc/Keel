@@ -202,9 +202,12 @@ function executeLive(plan: ExecutionPlan, runner: LiveRunner): ExecutionResult {
   try {
     raw = runner(plan.command, realArgs);
   } catch (err) {
+    // execSync embeds the full command string in the error message when it fails.
+    // That string contains the real --password value. Redact before persisting.
+    const msg = err instanceof Error ? err.message : String(err);
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: msg.replace(/--password\s+\S+/g, "--password <redacted>"),
     };
   }
 

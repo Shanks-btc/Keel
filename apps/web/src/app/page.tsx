@@ -456,6 +456,7 @@ export default function DashboardPage() {
       {/* 2 — Trading summary row */}
       <TradingSummaryRow
         portfolioUsd={snapshot?.portfolioUsd ?? null}
+        portfolioSource={portfolioSource}
         exposureData={exposureData}
         latestSwap={latestSwapData}
         drawdownPct={snapshot?.currentDrawdownPct ?? null}
