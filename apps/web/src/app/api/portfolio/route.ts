@@ -20,7 +20,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 import { execSync } from "child_process";
 import type { PortfolioSnapshot, PortfolioFreshness, DrawdownPoint } from "@keel/shared";
-import { applyDrawdownPoint, MAX_HISTORY } from "../../../lib/drawdown-history";
+import { applyDrawdownPoint } from "../../../lib/drawdown-history";
 
 export const dynamic = "force-dynamic";
 
@@ -36,11 +36,20 @@ const VOLATILE_SYMS = ["ETH", "CAKE", "LINK"] as const;
 let twakCache: { snapshot: PortfolioSnapshot; cachedAt: number } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-// Diagnostic: log TWAK CLI version once per process lifetime
-let twakVersionLogged = false;
-
 const BASELINE_FILE   = join(DATA_DIR, "pnl-baseline.json");
 const DD_HISTORY_FILE = join(DATA_DIR, "drawdown-history.json");
+
+// ── Password redaction ────────────────────────────────────────────────────────
+// Applied to every error string that originates from an execSync call that
+// includes --password. Node embeds the full command (incl. password) in the
+// error message when execSync throws — this regex strips it before the string
+// is logged, returned to callers, or surfaced to the dashboard.
+// Same pattern as packages/agent/src/execution/twak.ts executeLive().
+
+const REDACT_PW_RE = /--password\s+\S+/g;
+function redactPassword(s: string): string {
+  return s.replace(REDACT_PW_RE, "--password <redacted>");
+}
 
 // ── PnL baseline (write-once) ────────────────────────────────────────────────
 
@@ -150,19 +159,31 @@ async function fetchVolatilePrices(): Promise<Map<string, number>> {
 //   - Volatile tokens (ETH, CAKE, LINK) start at valueUsd=0; enriched by applyVolatilePrices().
 //   - portfolioUsd before enrichment = BNB USD + stable USD only.
 //
-// BNB_WALLET_PASSWORD is never passed — balance reads are public BSC data.
-// On Windows, the CLI exits with code 9 (UV_HANDLE_CLOSING assertion) after writing valid JSON.
-// We handle this by extracting stdout from the thrown error object.
+// BNB_WALLET_PASSWORD is read from env and passed as --password when set.
+// On Windows dev without BNB_WALLET_PASSWORD, TWAK falls back to the OS keychain
+// (Windows Credential Manager) — but that keychain does not exist on Railway,
+// so the explicit --password flag is required there.
+// On Windows, the CLI may exit with code 9 (UV_HANDLE_CLOSING assertion) after
+// writing valid JSON; we extract stdout from the thrown error in that case.
+//
+// SECURITY: every error string that could contain the command line (and therefore
+// the password) is passed through redactPassword() before being returned or logged.
 function fetchTwakBalance(): { snapshot: PortfolioSnapshot | null; error: string | null } {
+  // Read password — passed explicitly so Railway (no OS keychain) works.
+  // Falls through to no --password flag when unset, preserving OS-keychain
+  // behaviour for local dev environments that haven't set BNB_WALLET_PASSWORD.
+  const password = process.env["BNB_WALLET_PASSWORD"];
+  const pwArgs   = password ? ` --password ${password}` : "";
+  const cmd      = `npx --yes --package @trustwallet/cli twak wallet balance --chain bsc${pwArgs} --json`;
+
   try {
     let raw = "";
     try {
-      raw = execSync(
-        "npx --yes --package @trustwallet/cli twak wallet balance --chain bsc --json",
-        { timeout: 15_000, encoding: "utf8" },
-      );
+      raw = execSync(cmd, { timeout: 15_000, encoding: "utf8" });
     } catch (e) {
       // Windows: process exits with code 9 after JSON is written — stdout still has the data.
+      // Non-Windows failure: err.message embeds the full command string (incl. password) —
+      // redact before returning so the password never appears in logs or error responses.
       const err = e as { stdout?: string | Buffer; message?: string };
       raw = typeof err.stdout === "string"
         ? err.stdout
@@ -170,12 +191,15 @@ function fetchTwakBalance(): { snapshot: PortfolioSnapshot | null; error: string
         ? err.stdout.toString("utf8")
         : "";
       if (!raw) {
-        return { snapshot: null, error: `execSync failed: ${err.message ?? String(e)}` };
+        const safeMsg = redactPassword(err.message ?? String(e));
+        return { snapshot: null, error: `execSync failed: ${safeMsg}` };
       }
     }
 
-    // DIAGNOSTIC — log raw output before any parsing so Railway logs show exact CLI response
-    console.log("[portfolio] raw twak output:", raw.slice(0, 800));
+    // Gate raw-output diagnostic behind TWAK_DEBUG=yes — not printed on every request.
+    if (process.env["TWAK_DEBUG"] === "yes") {
+      console.log("[portfolio] raw twak output:", raw.slice(0, 800));
+    }
 
     // Banner-tolerant JSON extraction (CLI may print a preamble before the JSON object)
     const jsonStart = raw.indexOf("{");
@@ -246,7 +270,9 @@ function fetchTwakBalance(): { snapshot: PortfolioSnapshot | null; error: string
       error: null,
     };
   } catch (e) {
-    return { snapshot: null, error: String(e) };
+    // Outer catch covers JS logic errors (JSON.parse failures, etc.).
+    // Redact defensively in case the error text somehow contains the command.
+    return { snapshot: null, error: redactPassword(String(e)) };
   }
 }
 
@@ -324,26 +350,6 @@ export async function GET() {
     });
   }
 
-  // DIAGNOSTIC — log TWAK CLI version once per process lifetime
-  if (!twakVersionLogged) {
-    twakVersionLogged = true;
-    try {
-      const verRaw = execSync(
-        "npx --yes --package @trustwallet/cli twak --version",
-        { timeout: 10_000, encoding: "utf8" },
-      );
-      console.log("[portfolio] twak CLI version:", verRaw.trim());
-    } catch (e) {
-      const err = e as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
-      const verOut = typeof err.stdout === "string"
-        ? err.stdout
-        : Buffer.isBuffer(err.stdout)
-        ? err.stdout.toString("utf8")
-        : "";
-      console.log("[portfolio] twak CLI version:", verOut.trim() || `error: ${err.message ?? String(e)}`);
-    }
-  }
-
   // Start CMC price fetch BEFORE the blocking execSync in fetchTwakBalance().
   // The HTTP request goes in-flight at the OS level even while execSync holds the JS thread,
   // so by the time execSync returns the CMC response is likely already received.
@@ -378,6 +384,8 @@ export async function GET() {
     });
   }
 
+  // twakError is already redacted at source inside fetchTwakBalance() —
+  // safe to log directly.
   console.log(`[portfolio] live query failed: ${twakError ?? "unknown error"}`);
 
   // 2. Fall back to portfolio-snapshot.json (written by runner)
