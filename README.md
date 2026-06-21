@@ -7,13 +7,33 @@ Keel optimizes for staying alive while capturing upside. It's a self-custodied, 
 
 ---
 
+## For judges
+
+
+- **Registration:** [`0x006151e4…ac305`](https://bscscan.com/tx/0x006151e42ceb1b151ddcd7b172b9dd2087cbabbe7fbe3a58c63274c3fa6ac305) — `register()` call to the competition contract, confirmed on BSCScan
+- **First qualifying swap:** [`0x99ef6856…d9854`](https://bscscan.com/tx/0x99ef6856cd679a65a7d7877b97bd5a4f525b98b0b61a2589481f2a108e6d9854) — real BSC swap via TWAK
+- **Live agent state:** the dashboard reads the agent's own persisted state and audit log directly — every number is either real or an explicit, honest empty state ("Awaiting first live cycle"), never fabricated.
+
+---
+
+## Who this is for
+
+- **Hackathon judges** evaluating self-custodial execution depth, real Agent Hub usage, and drawdown-aware design.
+- **Builders** who want a minimal, fully auditable reference for a self-custodied trading agent with a deterministic (non-LLM) decision core.
+- **Anyone** who wants to see exactly how a risk-managed autonomous agent reasons, gate by gate, with no black box.
+
+**What this is NOT** (deliberate scope choices):
+- **Not investment advice, ever.** No profitability claim.
+- **Not LLM-driven in the trading decision.** The risk score is pure deterministic math — auditable, reproducible, no model in the loop. CMC Agent Hub data *feeds* the formula as numbers; it doesn't make the decision.
+- **Not "DQ-proof."** Keel is designed to be *drawdown-resistant* and *disqualification-resistant* — a meaningfully different, honest claim. It says so in its own UI.
+
+---
+
 ## What Keel Does
 
 Most autonomous trading agents chase upside and get wiped out on the first real drawdown. Keel is built backwards from that failure mode: a deterministic 3-component risk engine reads live market signals from the **CoinMarketCap Agent Hub** (with REST fallback for reliability), computes a transparent risk score, and rotates a self-custodied portfolio across BSC via **TWAK (Trust Wallet Agent Kit)**. The agent never holds custody risk for its operator — TWAK signs locally, and no private key, password, or seed phrase is ever exposed to the dashboard or stored by the app.
 
 A daily qualification scheduler attempts the lowest-risk valid action every day — **never forced into risk, but never skipping a day either.** An asymmetric drawdown gate always permits de-risking, never blocks it. A hard kill-switch and per-trade caps stay active at all times. Every cycle's reasoning — signals used, risk score, mode, gate results, and outcome — is persisted to an audit log and surfaced live on the dashboard.
-
-Keel does not claim to be "DQ-proof" or risk-free. It is designed to be **drawdown-resistant** and **disqualification-resistant** — and it says so, explicitly, in its own UI.
 
 ---
 
@@ -24,13 +44,30 @@ Captured against the real registered agent wallet on BSC Mainnet:
 | Output | Value |
 |---|---|
 | Agent Wallet | `0x66af72374Eb358cf939bc1954b8F62EfcF08E10a` |
+| Competition Contract | `0x212c61b9b72c95d95bf29cf032f5e5635629aed5` |
 | Competition Registration | [View tx ↗](https://bscscan.com/tx/0x006151e42ceb1b151ddcd7b172b9dd2087cbabbe7fbe3a58c63274c3fa6ac305) |
 | First Qualifying BSC Swap | [View tx ↗](https://bscscan.com/tx/0x99ef6856cd679a65a7d7877b97bd5a4f525b98b0b61a2589481f2a108e6d9854) |
 | Execution Layer | TWAK — self-custodial, local signing |
 | Custody Model | Self-custodial. No private key ever touches the dashboard. |
 | Test Coverage | 270/270 tests passing |
+| Live Dashboard | https://keel-production-90fe.up.railway.app/ |
+| Health Check | https://keel-production-90fe.up.railway.app/api/health |
 
-**Independent verification** — anyone can confirm these are real, on-chain BSC transactions by opening either link above directly on BSCScan. No API key, no AetherCredit-style server in the trust path — the proof is the blockchain itself.
+**Independent verification** — anyone can confirm these are real, on-chain BSC transactions by opening either link above directly on BSCScan. No API key, no server in the trust path — the proof is the blockchain itself.
+
+---
+
+## Competition Compliance
+
+| Requirement | How Keel satisfies it |
+|---|---|
+| Self-custody (TWAK) | TWAK CLI is the sole signing path for every trade. The dashboard and runner never touch a private key. (`packages/agent/src/execution/twak.ts`) |
+| On-chain agent registration | `twak compete register --json` executed against the competition contract; registration tx persisted and shown on the live Proof Trail. |
+| Token allowlist | Hard-coded 7-token allowlist (ETH, CAKE, LINK volatile; USDT, USDC, USD1, FDUSD stable). BNB is gas-only, never counted as portfolio. Enforced before any quote is requested. (`packages/agent/src/guardrails/allowlist.ts`) |
+| Daily qualifying attempt | A scheduler attempts the lowest-risk valid action every day — never forced into risk, never skips a day. Falls back to a minimum-size drawdown-neutral swap if nothing else qualifies. (`packages/agent/src/loop/scheduler.ts`) |
+| Drawdown protection | Post-formula drawdown overlay caps volatile exposure below the mode default during a live drawdown; an asymmetric projected-drawdown gate always permits de-risking trades, never blocks them; a hard internal kill-switch halts new volatile exposure. (`packages/agent/src/risk/overlays.ts`, `packages/agent/src/loop/drawdown-gate.ts`) |
+| Slippage protection | Every TWAK swap call is invoked with an explicit `--slippage` cap. (`packages/agent/src/execution/twak.ts`) |
+| Native x402 | Built and gated behind a feature flag, using the CMC Agent Hub's x402 path on Base. Honestly labeled "Not yet exercised" on the dashboard until a real call fires — never claimed as active without proof. (`packages/agent/src/execution/x402.ts`) |
 
 ---
 
@@ -150,6 +187,14 @@ Deterministic. No oracle, no LLM, no human judgment in the trading decision — 
 
 ---
 
+## How Honesty Is Enforced, By Design
+
+Keel's dashboard never shows a fake number. Every card has an explicit, honest empty state — `"Awaiting first live cycle"`, `"No live trades recorded yet"` — rather than a placeholder dressed up as real data. Source labeling is explicit throughout: `LIVE` (real wallet/snapshot data), `SIMULATION` (configured estimate, never shown as live), or an honest awaiting-data state. Wording is held to a strict standard: **"drawdown-resistant" and "disqualification-resistant," never "DQ-proof" or "guaranteed."**
+
+This extends to the agent's own self-reporting: when a live execution attempt fails, the scheduler logs `BLOCKED` with the exact reason — it never fabricates a success.
+
+---
+
 ## Local Deployment
 
 ### Prerequisites
@@ -198,26 +243,6 @@ npm run dev --workspace=apps/web
 
 ---
 
-## Live Links
-
-| Resource | URL |
-|---|---|
-| Live Dashboard | https://keel-production-90fe.up.railway.app/ |
-| GitHub | https://github.com/Shanks-btc/Keel |
-| Agent Wallet (BSC) | https://bscscan.com/address/0x66af72374Eb358cf939bc1954b8F62EfcF08E10a |
-| Registration Tx | https://bscscan.com/tx/0x006151e42ceb1b151ddcd7b172b9dd2087cbabbe7fbe3a58c63274c3fa6ac305 |
-| First Qualifying Swap | https://bscscan.com/tx/0x99ef6856cd679a65a7d7877b97bd5a4f525b98b0b61a2589481f2a108e6d9854 |
-
----
-
-## How Honesty Is Enforced, By Design
-
-Keel's dashboard never shows a fake number. Every card has an explicit, honest empty state — `"Awaiting first live cycle"`, `"No live trades recorded yet"` — rather than a placeholder dressed up as real data. Source labeling is explicit throughout: `LIVE` (real wallet/snapshot data), `SIMULATION` (configured estimate, never shown as live), or an honest awaiting-data state. Wording is held to a strict standard: **"drawdown-resistant" and "disqualification-resistant," never "DQ-proof" or "guaranteed."**
-
-This extends to the agent's own self-reporting: when a live execution attempt fails, the scheduler logs `BLOCKED` with the exact reason — it never fabricates a success.
-
----
-
 ## Project Structure
 
 ```
@@ -257,6 +282,12 @@ Keel/
 
 ---
 
+## Disclaimers
+
+This is competition code, not investment advice. The agent trades real BNB Smart Chain assets autonomously, within a small, intentionally limited budget. Losses are possible. Keel will not trade tokens outside its 7-token allowlist, will not submit transactions outside TWAK, and will not bypass its guardrail chain. No user funds are held — Keel operates only on its own registered TWAK wallet.
+
+---
+
 ## Team
 
 Solo builder — full-stack and blockchain developer, four years of experience, focused on Web3/AI agent infrastructure. Built Keel end-to-end: risk engine, TWAK execution integration, CMC Agent Hub signals, autonomous scheduler, and the live dashboard.
@@ -266,3 +297,9 @@ Solo builder — full-stack and blockchain developer, four years of experience, 
 | X | [@Shank_btc](https://x.com/Shank_btc) |
 | GitHub | [Shanks-btc](https://github.com/Shanks-btc) |
 | Email | pkelvin856@gmail.com |
+
+---
+
+## License
+
+MIT — see [LICENSE](./LICENSE) for details.
