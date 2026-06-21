@@ -15,6 +15,7 @@ console.log("[keel diag] Total env var count =", Object.keys(process.env).length
 
 const { spawn } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -41,6 +42,48 @@ try {
   writable = false;
 }
 console.log(`[keel server] Data directory writable: ${writable}`);
+
+// ── TWAK keystore reconstruction ─────────────────────────────────────────────
+// Runs synchronously before any child process is spawned.
+// Decodes wallet.json and credentials.json from base64 env vars and writes
+// them to ~/.twak/ so the twak CLI can find them regardless of container user.
+// NEVER logs decoded content or the base64 strings — only booleans.
+
+(function reconstructKeystore() {
+  const walletB64      = process.env["TWAK_WALLET_JSON_B64"];
+  const credentialsB64 = process.env["TWAK_CREDENTIALS_JSON_B64"];
+
+  if (!walletB64 || !credentialsB64) {
+    console.log("[keel server] TWAK keystore env vars not set — skipping reconstruction");
+    return;
+  }
+
+  const twakDir = path.join(os.homedir(), ".twak");
+  let walletOk = false;
+  let credentialsOk = false;
+
+  try {
+    fs.mkdirSync(twakDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(twakDir, "wallet.json"),
+      Buffer.from(walletB64, "base64"),
+    );
+    walletOk = true;
+
+    fs.writeFileSync(
+      path.join(twakDir, "credentials.json"),
+      Buffer.from(credentialsB64, "base64"),
+    );
+    credentialsOk = true;
+  } catch (err) {
+    console.error(`[keel server] Keystore reconstruction error: ${err.message}`);
+  }
+
+  console.log(
+    `[keel server] Keystore reconstructed: wallet.json=${walletOk} credentials.json=${credentialsOk}`,
+  );
+})();
 
 // ── Cycle runner ──────────────────────────────────────────────────────────────
 
