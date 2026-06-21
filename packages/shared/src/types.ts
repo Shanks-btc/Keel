@@ -324,6 +324,9 @@ export interface ExecutionResult {
   txHash?: string;          // BSC tx hash when the swap succeeded
   explorerUrl?: string;     // https://bscscan.com/tx/<txHash>
   error?: string;           // set when ok is false
+  amountOut?: number | null;       // output token amount — parsed from TWAK stdout if present
+  slippagePct?: number | null;     // realized slippage % — parsed from TWAK stdout if present
+  priceImpactPct?: number | null;  // price impact % — parsed from TWAK stdout if present
 }
 
 // ── Cycle result (output of one full decision cycle) ─────────────────────────
@@ -483,6 +486,10 @@ export interface AuditEntry {
   blockedReason?: string;
   dryRun?: boolean;                    // true when produced by a dry-run cycle; no funds moved
   hubAttempt?: HubAttempt;             // per-tool Hub status when HUB_ENABLED=yes; absent otherwise
+  amountOut?: number | null;           // output token amount from the executed swap
+  slippagePct?: number | null;         // realized slippage % (computed from quote output vs minReceived)
+  priceImpactPct?: number | null;      // price impact % from TWAK quote/execute output
+  assetPriceUsd?: number | null;       // ETH USD price at cycle time (from Hub or REST)
 }
 
 // ── Portfolio snapshot (persisted after every runner cycle) ──────────────────

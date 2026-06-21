@@ -119,18 +119,55 @@ function buildAuditCommand(plan: ExecutionPlan): string {
 // Parse the raw output from a live TWAK execute command.
 // Tries common tx hash field names because the exact execute output shape is
 // unconfirmed (no real swap has been run yet — docs/verify-in-docs.md §8).
-function parseLiveOutput(raw: string): { txHash?: string; error?: string } {
+// Also extracts amountOut/priceImpactPct/slippagePct using candidate field names
+// matching the confirmed quote response shape (output, priceImpact, minReceived).
+// All three are nullable — never fabricated; null when absent from stdout.
+function parseLiveOutput(raw: string): {
+  txHash?: string;
+  error?: string;
+  amountOut: number | null;
+  priceImpactPct: number | null;
+  slippagePct: number | null;
+} {
+  function toNum(v: unknown): number | null {
+    if (v == null) return null;
+    const n = typeof v === "number" ? v : parseFloat(String(v));
+    return isNaN(n) ? null : n;
+  }
+
   try {
     const obj = extractJson(raw);
+
     const txHash =
       typeof obj["txHash"] === "string" ? obj["txHash"] :
       typeof obj["hash"] === "string" ? obj["hash"] :
       typeof obj["transactionHash"] === "string" ? obj["transactionHash"] :
       undefined;
     const error = typeof obj["error"] === "string" ? obj["error"] : undefined;
-    return { txHash, error };
+
+    // amountOut: try execute-specific name first, then confirmed quote field name
+    const amountOut = toNum(obj["amountOut"] ?? obj["output"]);
+
+    // priceImpactPct: try both naming conventions
+    const priceImpactPct = toNum(obj["priceImpactPct"] ?? obj["priceImpact"]);
+
+    // slippagePct: try direct fields; if absent, derive from output vs minReceived
+    let slippagePct: number | null = toNum(obj["slippagePct"] ?? obj["slippage"]);
+    if (slippagePct === null && amountOut !== null && amountOut > 0) {
+      const minReceived = toNum(obj["minReceived"]);
+      if (minReceived !== null) {
+        slippagePct = ((amountOut - minReceived) / amountOut) * 100;
+      }
+    }
+
+    return { txHash, error, amountOut, priceImpactPct, slippagePct };
   } catch {
-    return { error: `Unparseable TWAK execute output: ${raw.slice(0, 200)}` };
+    return {
+      error: `Unparseable TWAK execute output: ${raw.slice(0, 200)}`,
+      amountOut: null,
+      priceImpactPct: null,
+      slippagePct: null,
+    };
   }
 }
 
@@ -171,13 +208,21 @@ function executeLive(plan: ExecutionPlan, runner: LiveRunner): ExecutionResult {
     };
   }
 
-  // 6. Parse output and return ExecutionResult
+  // 6. Diagnostic: log full execute stdout when TWAK_DEBUG=yes (never on by default)
+  if (process.env["TWAK_DEBUG"] === "yes") {
+    console.log("[twak debug] raw execute stdout:", raw);
+  }
+
+  // 7. Parse output and return ExecutionResult
   const output = parseLiveOutput(raw);
   if (output.txHash) {
     return {
       ok: true,
       txHash: output.txHash,
       explorerUrl: `https://bscscan.com/tx/${output.txHash}`,
+      amountOut: output.amountOut,
+      priceImpactPct: output.priceImpactPct,
+      slippagePct: output.slippagePct,
     };
   }
   return {

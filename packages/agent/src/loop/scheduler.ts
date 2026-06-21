@@ -50,6 +50,42 @@ import {
 } from "../state/persistence.js";
 import { appendAuditEntry as fileAppendAudit } from "../state/audit.js";
 
+// ── Swap metric helpers ───────────────────────────────────────────────────────
+
+// Parse a string | number quote field to a number, null on failure.
+function parseQuoteNum(val: string | number): number | null {
+  const n = typeof val === "number" ? val : parseFloat(val);
+  return isNaN(n) ? null : n;
+}
+
+// Derive amountOut / priceImpactPct / slippagePct for an executed trade.
+// Priority: execute-stdout values (when TWAK returns them) → pre-trade quote → null.
+// All outputs are nullable — never fabricated.
+function deriveSwapMetrics(
+  execResult: ExecutionResult,
+  plan: ExecutionPlan,
+): { amountOut: number | null; priceImpactPct: number | null; slippagePct: number | null } {
+  // Use execute-stdout values when present
+  if (execResult.amountOut != null || execResult.priceImpactPct != null) {
+    return {
+      amountOut: execResult.amountOut ?? null,
+      priceImpactPct: execResult.priceImpactPct ?? null,
+      slippagePct: execResult.slippagePct ?? null,
+    };
+  }
+  // Fall back to pre-trade quote (confirmed shape: output, priceImpact, minReceived)
+  const q = plan.quote;
+  if (!q) return { amountOut: null, priceImpactPct: null, slippagePct: null };
+  const amountOut = parseQuoteNum(q.output);
+  const priceImpactPct = parseQuoteNum(q.priceImpact);
+  const minReceived = parseQuoteNum(q.minReceived);
+  const slippagePct =
+    amountOut !== null && amountOut > 0 && minReceived !== null
+      ? ((amountOut - minReceived) / amountOut) * 100
+      : null;
+  return { amountOut, priceImpactPct, slippagePct };
+}
+
 // ── Primary pair for fallback swap (both eligible stables, BSC-routed) ────────
 
 const FALLBACK_FROM = "USDT" as const;
@@ -169,16 +205,19 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
-  function buildAudit(
-    action: SchedulerAction,
-    opts: {
-      proposal?: TradeProposal | null;
-      drawdownGate?: DrawdownGateResult | null;
-      guardrailResults?: GuardrailResult[];
-      txHash?: string;
-      blockedReason?: string;
-    } = {},
-  ): AuditEntry {
+  // Shared opts shape for buildAudit and conclude (kept in sync).
+  type ConcludeOpts = {
+    proposal?: TradeProposal | null;
+    drawdownGate?: DrawdownGateResult | null;
+    guardrailResults?: GuardrailResult[];
+    txHash?: string;
+    blockedReason?: string;
+    amountOut?: number | null;
+    slippagePct?: number | null;
+    priceImpactPct?: number | null;
+  };
+
+  function buildAudit(action: SchedulerAction, opts: ConcludeOpts = {}): AuditEntry {
     return {
       cycleId,
       date: today,
@@ -199,6 +238,10 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
       blockedReason: opts.blockedReason,
       dryRun: dryRun || undefined,
       hubAttempt,
+      assetPriceUsd: snapshot.price,
+      amountOut: opts.amountOut ?? null,
+      slippagePct: opts.slippagePct ?? null,
+      priceImpactPct: opts.priceImpactPct ?? null,
     };
   }
 
@@ -206,16 +249,7 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
   // for one cycle. Active only in live mode (dryRun cycles never clear it).
   const riskOffOverrideActive = state.riskOffOverride?.active === true && !dryRun;
 
-  function conclude(
-    action: SchedulerAction,
-    opts: {
-      proposal?: TradeProposal | null;
-      drawdownGate?: DrawdownGateResult | null;
-      guardrailResults?: GuardrailResult[];
-      txHash?: string;
-      blockedReason?: string;
-    } = {},
-  ): SchedulerResult {
+  function conclude(action: SchedulerAction, opts: ConcludeOpts = {}): SchedulerResult {
     // Always update HWM in memory. Persist state and day ledger only for real cycles.
     updateHwm(state, totalValueUsd);
 
@@ -266,6 +300,7 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
       return conclude("KILL_SWITCH", {
         proposal: cycleResult.proposal,
         txHash: execResult.txHash,
+        ...deriveSwapMetrics(execResult, cycleResult.executionPlan),
       });
     }
     return conclude("BLOCKED", {
@@ -312,6 +347,7 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
             drawdownGate,
             guardrailResults: cycleResult.guardrailResults,
             txHash: execResult.txHash,
+            ...deriveSwapMetrics(execResult, cycleResult.executionPlan),
           });
         }
         return conclude("BLOCKED", {
@@ -401,6 +437,7 @@ export async function runScheduler(input: SchedulerInput): Promise<SchedulerResu
       drawdownGate: fallbackDrawdownGate,
       guardrailResults: fallbackGate.guardrailResults,
       txHash: fallbackExec.txHash,
+      ...deriveSwapMetrics(fallbackExec, fallbackPlan),
     });
   }
 

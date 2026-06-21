@@ -322,4 +322,44 @@ describe("execute live — gated path", () => {
       },
     );
   });
+
+  it("execute stdout with swap fields → amountOut/priceImpactPct/slippagePct populated", () => {
+    // Simulate TWAK execute returning the same fields as a quote response
+    const swapOutput = JSON.stringify({
+      txHash: "0xdeadbeef0000000000000000000000000000000000000002",
+      output: "0.001147",
+      priceImpact: 0.05,
+      minReceived: "0.001135",
+    });
+    const stubRunner: LiveRunner = () => swapOutput;
+
+    withEnv(
+      { I_UNDERSTAND_REAL_FUNDS: "yes", BNB_WALLET_PASSWORD: "test-pw" },
+      () => {
+        const result = execute(plan, "live", stubRunner);
+        expect(result.ok).toBe(true);
+        expect(result.amountOut).toBeCloseTo(0.001147);
+        expect(result.priceImpactPct).toBeCloseTo(0.05);
+        // slippagePct derived from (output - minReceived) / output * 100
+        expect(result.slippagePct).not.toBeNull();
+        expect(result.slippagePct!).toBeGreaterThan(0);
+      },
+    );
+  });
+
+  it("execute stdout without swap fields → amountOut/priceImpactPct/slippagePct are null", () => {
+    const stubRunner: LiveRunner = () =>
+      JSON.stringify({ txHash: "0xdeadbeef0000000000000000000000000000000000000003" });
+
+    withEnv(
+      { I_UNDERSTAND_REAL_FUNDS: "yes", BNB_WALLET_PASSWORD: "test-pw" },
+      () => {
+        const result = execute(plan, "live", stubRunner);
+        expect(result.ok).toBe(true);
+        expect(result.amountOut).toBeNull();
+        expect(result.priceImpactPct).toBeNull();
+        expect(result.slippagePct).toBeNull();
+      },
+    );
+  });
 });

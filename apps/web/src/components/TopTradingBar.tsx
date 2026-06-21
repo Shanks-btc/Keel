@@ -134,7 +134,7 @@ export function TopTradingBar({
       </div>
 
       {/* Right — controls */}
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
         <button
           onClick={paused ? onResume : onPause}
           style={{

@@ -26,8 +26,8 @@ function SummaryItem({ label, value, sub, subColor, mono }: SummaryItemProps) {
         border: "1px solid var(--border)",
         borderRadius: "6px",
         padding: "12px 16px",
-        flex: 1,
-        minWidth: 0,
+        flexShrink: 0,
+        minWidth: "148px",
       }}
     >
       <div

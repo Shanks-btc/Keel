@@ -159,10 +159,10 @@ function auditToSwap(entry: AuditEntry): Swap | null {
     fromAsset: p.fromAsset,
     toAsset: p.toAsset,
     amountIn: p.amountIn,
-    amountOut: 0,
+    amountOut: entry.amountOut ?? 0,
     valueUsd: p.estimatedValueUsd,
-    priceImpactPct: 0,
-    slippagePct: 0,
+    priceImpactPct: entry.priceImpactPct ?? 0,
+    slippagePct: entry.slippagePct ?? 0,
     reason: p.reason,
     txHash: entry.txHash,
     explorerUrl: `https://bscscan.com/tx/${entry.txHash}`,
@@ -388,7 +388,7 @@ export default function DashboardPage() {
               : entry.mode === "Risk-off"
               ? ("Bearish" as const)
               : ("Neutral" as const),
-          assetPrice: 0,
+          assetPrice: entry.assetPriceUsd ?? 0,
           assetSymbol: "ETH" as const,
         };
       })()
