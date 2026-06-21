@@ -1,3 +1,9 @@
+console.log("[keel diag] PORTFOLIO_VALUE_USD =", JSON.stringify(process.env.PORTFOLIO_VALUE_USD));
+console.log("[keel diag] KEEL_DATA_DIR =", JSON.stringify(process.env.KEEL_DATA_DIR));
+console.log("[keel diag] I_UNDERSTAND_REAL_FUNDS =", JSON.stringify(process.env.I_UNDERSTAND_REAL_FUNDS));
+console.log("[keel diag] CMC_API_KEY set? =", process.env.CMC_API_KEY ? "yes, length " + process.env.CMC_API_KEY.length : "NOT SET");
+console.log("[keel diag] Total env var count =", Object.keys(process.env).length);
+
 // Railway single-service entrypoint.
 // Starts the Next.js web dashboard and runs the scheduler cycle in-process
 // so both share the same KEEL_DATA_DIR volume mount.
