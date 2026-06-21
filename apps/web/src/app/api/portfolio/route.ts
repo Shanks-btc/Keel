@@ -36,6 +36,9 @@ const VOLATILE_SYMS = ["ETH", "CAKE", "LINK"] as const;
 let twakCache: { snapshot: PortfolioSnapshot; cachedAt: number } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
+// Diagnostic: log TWAK CLI version once per process lifetime
+let twakVersionLogged = false;
+
 const BASELINE_FILE   = join(DATA_DIR, "pnl-baseline.json");
 const DD_HISTORY_FILE = join(DATA_DIR, "drawdown-history.json");
 
@@ -170,6 +173,9 @@ function fetchTwakBalance(): { snapshot: PortfolioSnapshot | null; error: string
         return { snapshot: null, error: `execSync failed: ${err.message ?? String(e)}` };
       }
     }
+
+    // DIAGNOSTIC — log raw output before any parsing so Railway logs show exact CLI response
+    console.log("[portfolio] raw twak output:", raw.slice(0, 800));
 
     // Banner-tolerant JSON extraction (CLI may print a preamble before the JSON object)
     const jsonStart = raw.indexOf("{");
@@ -316,6 +322,26 @@ export async function GET() {
       pnlBaseline,
       drawdownHistory,
     });
+  }
+
+  // DIAGNOSTIC — log TWAK CLI version once per process lifetime
+  if (!twakVersionLogged) {
+    twakVersionLogged = true;
+    try {
+      const verRaw = execSync(
+        "npx --yes --package @trustwallet/cli twak --version",
+        { timeout: 10_000, encoding: "utf8" },
+      );
+      console.log("[portfolio] twak CLI version:", verRaw.trim());
+    } catch (e) {
+      const err = e as { stdout?: string | Buffer; stderr?: string | Buffer; message?: string };
+      const verOut = typeof err.stdout === "string"
+        ? err.stdout
+        : Buffer.isBuffer(err.stdout)
+        ? err.stdout.toString("utf8")
+        : "";
+      console.log("[portfolio] twak CLI version:", verOut.trim() || `error: ${err.message ?? String(e)}`);
+    }
   }
 
   // Start CMC price fetch BEFORE the blocking execSync in fetchTwakBalance().
