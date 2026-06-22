@@ -1,5 +1,5 @@
-import type { Exposure, Swap } from "@keel/shared";
-import { fmtUsd } from "../lib/format";
+import type { Exposure, Swap, PnL } from "@keel/shared";
+import { fmtUsd, fmtPct, pctColor } from "../lib/format";
 
 interface Props {
   portfolioUsd: number | null;
@@ -9,6 +9,8 @@ interface Props {
   drawdownPct: number | null;
   limitPct: number;
   killSwitchPct: number;
+  pnlData: PnL | null;
+  pnlChangeLabel: string;
 }
 
 interface SummaryItemProps {
@@ -81,6 +83,8 @@ export function TradingSummaryRow({
   drawdownPct,
   limitPct,
   killSwitchPct,
+  pnlData,
+  pnlChangeLabel,
 }: Props) {
   const portfolioSub =
     portfolioUsd === null
@@ -110,8 +114,19 @@ export function TradingSummaryRow({
       />
       <SummaryItem
         label="PnL"
-        value="—"
-        sub="awaiting first live cycle"
+        value={
+          pnlData !== null
+            ? (pnlData.totalUsd >= 0
+                ? `+${fmtUsd(pnlData.totalUsd)}`
+                : fmtUsd(pnlData.totalUsd))
+            : "—"
+        }
+        sub={
+          pnlData !== null
+            ? `${fmtPct(pnlData.change24hPct)} · ${pnlChangeLabel}`
+            : "awaiting first live cycle"
+        }
+        subColor={pnlData !== null ? pctColor(pnlData.totalUsd) : undefined}
         mono
       />
       <SummaryItem

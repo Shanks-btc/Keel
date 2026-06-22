@@ -35,6 +35,8 @@ export function DrawdownGuardrailChart({ data }: { data: DrawdownState | null })
     );
   }
 
+  const isSparse = data.series.length < 3;
+
   const minY =
     data.series.length > 0
       ? Math.min(data.killSwitchPct - 2, ...data.series.map((d) => d.drawdownPct))
@@ -47,7 +49,7 @@ export function DrawdownGuardrailChart({ data }: { data: DrawdownState | null })
         subtitle={`HWM-relative · Kill-switch ${data.killSwitchPct}%`}
       />
       <div style={{ height: "160px" }}>
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height={isSparse ? "90%" : "100%"}>
           <AreaChart
             data={data.series}
             margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
@@ -107,6 +109,18 @@ export function DrawdownGuardrailChart({ data }: { data: DrawdownState | null })
           </AreaChart>
         </ResponsiveContainer>
       </div>
+      {isSparse && (
+        <div
+          style={{
+            fontSize: "11px",
+            color: "var(--text-muted)",
+            textAlign: "center",
+            paddingTop: "4px",
+          }}
+        >
+          Building history — {data.series.length} snapshot{data.series.length !== 1 ? "s" : ""} recorded so far
+        </div>
+      )}
     </Card>
   );
 }

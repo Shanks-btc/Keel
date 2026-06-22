@@ -93,7 +93,7 @@ export function X402ConfirmationCard({ data }: { data: X402Confirmation }) {
             color: "var(--text-muted)",
           }}
         >
-          Fund-gated — real paid call pending wallet funding
+          Wallet funded on Base — awaiting first real paid call
         </div>
       )}
     </Card>

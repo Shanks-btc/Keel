@@ -118,7 +118,7 @@ function parseEnvNum(key: string): number {
 // Fetch USD prices for volatile allowlist tokens from CMC REST API.
 // Returns an empty Map on any failure — caller treats missing entries as $0.
 // Tries CMC_PRO_API_KEY first (web convention), then CMC_API_KEY (agent convention).
-async function fetchVolatilePrices(): Promise<Map<string, number>> {
+async function fetchVolatilePrices(): Promise<Map<string, { price: number; change24hPct: number | null }>> {
   const key = process.env.CMC_PRO_API_KEY ?? process.env.CMC_API_KEY;
   if (!key) return new Map();
 
@@ -132,15 +132,19 @@ async function fetchVolatilePrices(): Promise<Map<string, number>> {
       },
     );
     const data = await res.json() as {
-      data?: Record<string, Array<{ quote?: { USD?: { price?: number } } }>>;
+      data?: Record<string, Array<{ quote?: { USD?: { price?: number; percent_change_24h?: number } } }>>;
     };
 
-    const out = new Map<string, number>();
+    const out = new Map<string, { price: number; change24hPct: number | null }>();
     for (const sym of VOLATILE_SYMS) {
       const arr = data?.data?.[sym];
       if (!Array.isArray(arr) || arr.length === 0) continue;
-      const price = arr[0]?.quote?.USD?.price;
-      if (typeof price === "number" && price > 0) out.set(sym, price);
+      const usd = arr[0]?.quote?.USD;
+      const price = usd?.price;
+      if (typeof price === "number" && price > 0) {
+        const pct = usd?.percent_change_24h;
+        out.set(sym, { price, change24hPct: typeof pct === "number" ? pct : null });
+      }
     }
     return out;
   } catch {
@@ -282,7 +286,7 @@ function fetchTwakBalance(): { snapshot: PortfolioSnapshot | null; error: string
 // Returns a new snapshot object — does not mutate the input.
 function applyVolatilePrices(
   snap: PortfolioSnapshot,
-  prices: Map<string, number>,
+  prices: Map<string, { price: number; change24hPct: number | null }>,
 ): PortfolioSnapshot {
   if (prices.size === 0) return snap;
 
@@ -301,10 +305,11 @@ function applyVolatilePrices(
     } else if (STABLES.has(sym)) {
       stableUsd += entry.valueUsd;
     } else {
-      const price = prices.get(sym);
-      const usdValue = price !== undefined ? entry.balance * price : entry.valueUsd;
+      const priceEntry = prices.get(sym);
+      const usdValue = priceEntry !== undefined ? entry.balance * priceEntry.price : entry.valueUsd;
+      const change24hPct = priceEntry?.change24hPct ?? null;
       enrichedBalances[sym as keyof PortfolioSnapshot["tokenBalances"]] =
-        { ...entry, valueUsd: usdValue };
+        { ...entry, valueUsd: usdValue, change24hPct };
       volatileUsd += usdValue;
     }
   }

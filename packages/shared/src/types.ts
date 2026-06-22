@@ -501,7 +501,7 @@ export type PortfolioFreshness = "LIVE" | "STALE" | "UNAVAILABLE";
 export interface PortfolioSnapshot {
   snapshotAt: string;                // ISO-8601 of when snapshot was taken
   portfolioUsd: number;
-  tokenBalances: Partial<Record<AssetSymbol, { balance: number; valueUsd: number }>>;
+  tokenBalances: Partial<Record<AssetSymbol, { balance: number; valueUsd: number; change24hPct?: number | null }>>;
   allocation: { volatilePct: number; stablePct: number; gasPct: number };
   hwm: number;
   currentDrawdownPct: number;

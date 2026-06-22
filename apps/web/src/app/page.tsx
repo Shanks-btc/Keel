@@ -358,7 +358,7 @@ export default function DashboardPage() {
     snapshot !== null && Object.keys(snapshot.tokenBalances).length === 0;
   const holdingsData: SpotHolding[] = snapshot
     ? Object.entries(snapshot.tokenBalances)
-        .filter((entry): entry is [string, { balance: number; valueUsd: number }] =>
+        .filter((entry): entry is [string, { balance: number; valueUsd: number; change24hPct?: number | null }] =>
           entry[1] !== undefined,
         )
         .map(([asset, d]) => ({
@@ -368,7 +368,7 @@ export default function DashboardPage() {
           valueUsd: d.valueUsd,
           allocationPct:
             snapshot.portfolioUsd > 0 ? (d.valueUsd / snapshot.portfolioUsd) * 100 : 0,
-          change24hPct: null,
+          change24hPct: d.change24hPct ?? null,
         }))
         .sort((a, b) => b.valueUsd - a.valueUsd)
     : [];
@@ -449,12 +449,19 @@ export default function DashboardPage() {
     agentData?.lastAuditEntry?.riskScore ?? null;
 
   // ── Drawdown (HWM from persistent state > snapshot; series from history) ────────
-  const hwm =
+  // If the live portfolio value (from TWAK) exceeds the persisted HWM, use it as
+  // the effective HWM. This prevents the dashboard showing a stale low HWM from
+  // agent-state.json when the real balance is higher. We never write back to
+  // agent-state.json from the web layer — the runner owns that file.
+  const persistedHwm =
     agentData?.state?.highWaterMarkUsd && agentData.state.highWaterMarkUsd > 0
       ? agentData.state.highWaterMarkUsd
       : snapshot?.hwm && snapshot.hwm > 0
       ? snapshot.hwm
       : 0;
+  const isLiveSource = portfolioSource === "twak" || portfolioSource === "twak-cache";
+  const livePortfolioUsd = snapshot?.portfolioUsd ?? 0;
+  const hwm = isLiveSource && livePortfolioUsd > persistedHwm ? livePortfolioUsd : persistedHwm;
 
   const drawdownSeries: DrawdownPoint[] = portfolioData?.drawdownHistory ?? [];
 
@@ -538,6 +545,8 @@ export default function DashboardPage() {
         drawdownPct={snapshot?.currentDrawdownPct ?? null}
         limitPct={DRAW_LIMIT_PCT}
         killSwitchPct={DRAW_KILL_PCT}
+        pnlData={pnlData}
+        pnlChangeLabel={pnlChangeLabel}
       />
 
       {/* 3 — Main trading grid */}
