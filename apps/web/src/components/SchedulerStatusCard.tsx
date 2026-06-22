@@ -1,10 +1,6 @@
-// §3/§5 — Daily qualification scheduler status card.
-// Shows today's attempt status from the persisted day ledger (real data when available).
-// Uses §0a honesty wording throughout.
-
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, createElement } from "react";
 import type { DayAttemptEntry, AgentPersistentState } from "@keel/shared";
 import { Card, CardHeader } from "./ui/Card";
 import { fmtUsd, fmtDateTime } from "../lib/format";
@@ -19,9 +15,9 @@ type DeadlineStatus = "QUALIFIED" | "DUE_SOON" | "OVERDUE" | "BLOCKED" | "UNKNOW
 
 const DEADLINE_COLORS: Record<string, string> = {
   QUALIFIED: "var(--green)",
-  DUE_SOON:  "var(--amber)",
-  OVERDUE:   "var(--red)",
-  BLOCKED:   "var(--red)",
+  DUE_SOON: "var(--amber)",
+  OVERDUE: "var(--red)",
+  BLOCKED: "var(--red)",
 };
 
 function DeadlineBadge({
@@ -34,7 +30,7 @@ function DeadlineBadge({
   const color = DEADLINE_COLORS[status] ?? "var(--text-muted)";
   const label =
     status === "DUE_SOON" && nextDeadlineLabel
-      ? `DUE_SOON — by ${nextDeadlineLabel}`
+      ? "DUE_SOON — by " + nextDeadlineLabel
       : status;
   return (
     <span
@@ -42,8 +38,8 @@ function DeadlineBadge({
         fontSize: "10px",
         fontWeight: 700,
         color,
-        background: `${color}18`,
-        border: `1px solid ${color}40`,
+        background: color + "18",
+        border: "1px solid " + color + "40",
         borderRadius: "3px",
         padding: "2px 6px",
         letterSpacing: "0.06em",
@@ -57,8 +53,8 @@ function DeadlineBadge({
 function StatusBadge({ status }: { status: DayAttemptEntry["status"] | null }) {
   const colorMap: Record<string, string> = {
     EXECUTED: "var(--green)",
-    BLOCKED:  "var(--red)",
-    SKIPPED:  "var(--amber)",
+    BLOCKED: "var(--red)",
+    SKIPPED: "var(--amber)",
   };
   const color = status ? (colorMap[status] ?? "var(--text-muted)") : "var(--text-muted)";
   return (
@@ -67,8 +63,8 @@ function StatusBadge({ status }: { status: DayAttemptEntry["status"] | null }) {
         fontSize: "10px",
         fontWeight: 700,
         color,
-        background: `${color}18`,
-        border: `1px solid ${color}40`,
+        background: color + "18",
+        border: "1px solid " + color + "40",
         borderRadius: "3px",
         padding: "2px 6px",
         letterSpacing: "0.06em",
@@ -79,16 +75,33 @@ function StatusBadge({ status }: { status: DayAttemptEntry["status"] | null }) {
   );
 }
 
+// Uses createElement instead of JSX to avoid <a> tag being corrupted during copy-paste
+function TxLink({ txHash }: { txHash: string }) {
+  const url = "https://bscscan.com/tx/" + txHash;
+  const short = txHash.slice(0, 12) + "...";
+  return createElement("a", {
+    href: url,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      color: "var(--blue)",
+      fontFamily: "monospace",
+      textDecoration: "none",
+    },
+  }, short);
+}
+
 export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
-  // Timeout fallback: if the fetch hangs, stop showing Loading after 5 s.
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   useEffect(() => {
-    if (!isLoading || state !== null) { setLoadTimedOut(false); return; }
-    const t = setTimeout(() => setLoadTimedOut(true), 5_000);
+    if (!isLoading || state !== null) {
+      setLoadTimedOut(false);
+      return;
+    }
+    const t = setTimeout(() => setLoadTimedOut(true), 5000);
     return () => clearTimeout(t);
   }, [isLoading, state]);
 
-  // ── STATE 1: Loading (in-flight, no prior state, within 5 s timeout) ─────────
   if (isLoading && state === null && !loadTimedOut) {
     return (
       <Card>
@@ -97,33 +110,31 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
           subtitle="minimum-risk qualifying attempt"
         />
         <div style={{ fontSize: "12px", color: "var(--text-muted)", padding: "8px 0" }}>
-          Loading…
+          Loading...
         </div>
       </Card>
     );
   }
 
-  // ── STATES 2 & 3: data available (state non-null) OR empty (null / timed out) ─
   const todayEntry = state?.dayLedger[todayKey] ?? null;
   const hwm = state?.highWaterMarkUsd ?? 0;
 
-  // Compute 24h deadline status — warning-only indicator, no execution gate.
   const lastQualAt = state?.lastQualifyingTradeAt ?? null;
   let deadlineStatus: DeadlineStatus = "UNKNOWN";
   let nextDeadlineLabel: string | null = null;
 
   if (lastQualAt) {
-    const lastMs     = new Date(lastQualAt).getTime();
+    const lastMs = new Date(lastQualAt).getTime();
     const deadlineMs = lastMs + 24 * 60 * 60 * 1000;
-    const warnMs     = lastMs + 20 * 60 * 60 * 1000;
-    const nowMs      = Date.now();
+    const warnMs = lastMs + 20 * 60 * 60 * 1000;
+    const nowMs = Date.now();
     nextDeadlineLabel = new Date(deadlineMs).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
-    if      (nowMs >= deadlineMs) deadlineStatus = "OVERDUE";
-    else if (nowMs >= warnMs)     deadlineStatus = "DUE_SOON";
-    else                          deadlineStatus = "QUALIFIED";
+    if (nowMs >= deadlineMs) deadlineStatus = "OVERDUE";
+    else if (nowMs >= warnMs) deadlineStatus = "DUE_SOON";
+    else deadlineStatus = "QUALIFIED";
   } else if (todayEntry?.status === "BLOCKED") {
     deadlineStatus = "BLOCKED";
   }
@@ -136,6 +147,7 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
       />
 
       <div
+        className="scheduler-grid"
         style={{
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
@@ -145,7 +157,7 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
       >
         <div>
           <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
-            Today ({todayKey})
+            {"Today (" + todayKey + ")"}
           </div>
           <StatusBadge status={todayEntry?.status ?? null} />
         </div>
@@ -154,12 +166,11 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
             High-water mark
           </div>
           <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>
-            {hwm > 0 ? fmtUsd(hwm) : "—"}
+            {hwm > 0 ? fmtUsd(hwm) : "\u2014"}
           </span>
         </div>
       </div>
 
-      {/* 24h safety check */}
       {deadlineStatus !== "UNKNOWN" && (
         <div style={{ marginBottom: "14px" }}>
           <div style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "4px" }}>
@@ -181,30 +192,19 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
         >
           {todayEntry.action && (
             <div>
-              Action:{" "}
+              {"Action: "}
               <strong style={{ color: "var(--text-primary)" }}>{todayEntry.action}</strong>
             </div>
           )}
           {todayEntry.txHash && (
             <div>
-              Tx:{" "}
-              <a
-                href={`https://bscscan.com/tx/${todayEntry.txHash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  color: "var(--blue)",
-                  fontFamily: "monospace",
-                  textDecoration: "none",
-                }}
-              >
-                {todayEntry.txHash.slice(0, 12)}… ↗
-              </a>
+              {"Tx: "}
+              <TxLink txHash={todayEntry.txHash} />
             </div>
           )}
           {todayEntry.blockedReason && (
             <div style={{ color: "var(--red)" }}>
-              Blocked: {todayEntry.blockedReason}
+              {"Blocked: " + todayEntry.blockedReason}
             </div>
           )}
           <div style={{ color: "var(--text-muted)", marginTop: "2px" }}>
@@ -220,7 +220,7 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
             borderBottom: "1px solid var(--border)",
           }}
         >
-          Qualification status: No qualifying attempt recorded yet.
+          {"Qualification status: No qualifying attempt recorded yet."}
           <br />
           <span style={{ fontSize: "10px" }}>
             Cadence confirmation pending organizer clarification.
@@ -236,9 +236,7 @@ export function SchedulerStatusCard({ state, todayKey, isLoading }: Props) {
           lineHeight: "1.4",
         }}
       >
-        Fallback: drawdown-neutral stable-to-stable swap if the primary rotation
-        is unavailable. Not guaranteed unless organizers confirm stable-to-stable counts.
-        drawdown-resistant design — kill-switch and all safety gates remain active.
+        {"Fallback: drawdown-neutral stable-to-stable swap if the primary rotation is unavailable. Not guaranteed unless organizers confirm stable-to-stable counts. drawdown-resistant design \u2014 kill-switch and all safety gates remain active."}
       </div>
     </Card>
   );

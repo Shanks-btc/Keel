@@ -1,9 +1,3 @@
-// §7b — Risk-Gated Agent Controls.
-// Every preview routes through the §0a risk engine formula + §4 drawdown-gate logic
-// (computed server-side via /api/cycle-preview).
-// No control here bypasses TWAK, drawdown checks, or eligible-token checks.
-// No fake tx hashes. Cannot disable the engine. No "buy any token". No allowlist override.
-
 "use client";
 
 import { useState } from "react";
@@ -62,6 +56,7 @@ function Btn({
         fontWeight: 600,
         cursor: disabled ? "not-allowed" : "pointer",
         transition: "background 0.15s",
+        whiteSpace: "nowrap",
       }}
       onMouseEnter={(e) => {
         if (!disabled)
@@ -122,7 +117,7 @@ export function AgentControls({ status, riskOffActive, onPause, onResume, onRefr
         body: JSON.stringify({ riskOffOverride: { active } }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      onRefresh(); // reload state to reflect change
+      onRefresh();
     } catch (err) {
       setOverrideError(String(err));
     } finally {
@@ -188,7 +183,6 @@ export function AgentControls({ status, riskOffActive, onPause, onResume, onRefr
         </Btn>
       </div>
 
-      {/* Risk-Off override status */}
       {riskOffActive && (
         <div
           style={{
@@ -207,13 +201,13 @@ export function AgentControls({ status, riskOffActive, onPause, onResume, onRefr
           Cleared automatically after one live cycle executes.
         </div>
       )}
+
       {overrideError && (
         <div style={{ fontSize: "11px", color: "var(--red)", marginBottom: "8px" }}>
           Override error: {overrideError}
         </div>
       )}
 
-      {/* Safety notice */}
       <div
         style={{
           fontSize: "10px",
@@ -235,7 +229,6 @@ export function AgentControls({ status, riskOffActive, onPause, onResume, onRefr
         . Preview only — no trade is submitted here.
       </div>
 
-      {/* Preview result */}
       {preview && (
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: "10px" }}>
           {preview.priceIsSimulation && (
@@ -252,7 +245,6 @@ export function AgentControls({ status, riskOffActive, onPause, onResume, onRefr
             </div>
           )}
 
-          {/* Rotate to Stables preview */}
           {preview.direction === "to-stable" && preview.proposal ? (
             <>
               <div style={{ fontSize: "12px", marginBottom: "8px" }}>
@@ -288,8 +280,9 @@ export function AgentControls({ status, riskOffActive, onPause, onResume, onRefr
             </>
           ) : preview.ok !== false ? (
             <>
-              {/* Engine output */}
+              {/* className="preview-grid" collapses to 1 col on small screens */}
               <div
+                className="preview-grid"
                 style={{
                   display: "grid",
                   gridTemplateColumns: "1fr 1fr",
@@ -339,7 +332,6 @@ export function AgentControls({ status, riskOffActive, onPause, onResume, onRefr
                 </div>
               )}
 
-              {/* §4 drawdown gate result */}
               {preview.drawdownGate && (
                 <div
                   style={{
@@ -376,7 +368,6 @@ export function AgentControls({ status, riskOffActive, onPause, onResume, onRefr
             </div>
           )}
 
-          {/* Competition scoring deduction — documentation only, NOT used in any gate */}
           <div
             style={{
               fontSize: "11px",

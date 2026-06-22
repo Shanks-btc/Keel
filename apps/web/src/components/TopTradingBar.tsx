@@ -36,11 +36,13 @@ export function TopTradingBar({
       style={{
         backgroundColor: "var(--surface)",
         borderBottom: "1px solid var(--border)",
-        padding: "0 24px",
-        height: "56px",
+        padding: "0 var(--page-padding, 24px)",
+        minHeight: "56px",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: "8px",
         position: "sticky",
         top: 0,
         zIndex: 50,
@@ -73,9 +75,11 @@ export function TopTradingBar({
         </div>
       </div>
 
-      {/* Center — status pills */}
-      <div className="top-bar-center" style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-        {/* Status */}
+      {/* Center — status pills (hidden at ≤640px via CSS) */}
+      <div
+        className="top-bar-center"
+        style={{ display: "flex", alignItems: "center", gap: "20px" }}
+      >
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
           <span
             style={{
@@ -98,7 +102,6 @@ export function TopTradingBar({
           </span>
         </div>
 
-        {/* Mode */}
         <div
           style={{
             fontSize: "12px",
@@ -114,7 +117,6 @@ export function TopTradingBar({
           {mode.toUpperCase()}
         </div>
 
-        {/* Wallet */}
         <div
           style={{
             fontSize: "12px",
@@ -125,7 +127,6 @@ export function TopTradingBar({
           {shortAddress(walletAddress)}
         </div>
 
-        {/* Last updated */}
         <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
           {lastUpdated && !isNaN(new Date(lastUpdated).getTime())
             ? `Updated ${fmtRelative(lastUpdated)}`
@@ -134,7 +135,15 @@ export function TopTradingBar({
       </div>
 
       {/* Right — controls */}
-      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+      <div
+        className="top-bar-buttons"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          flexShrink: 0,
+        }}
+      >
         <button
           onClick={paused ? onResume : onPause}
           style={{
@@ -146,6 +155,7 @@ export function TopTradingBar({
             background: "transparent",
             color: paused ? "var(--green)" : "var(--amber)",
             cursor: "pointer",
+            whiteSpace: "nowrap",
           }}
         >
           {paused ? "Resume" : "Pause"}
@@ -161,6 +171,7 @@ export function TopTradingBar({
             background: "transparent",
             color: "var(--text-secondary)",
             cursor: "pointer",
+            whiteSpace: "nowrap",
           }}
         >
           Refresh

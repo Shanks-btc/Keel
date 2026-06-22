@@ -14,7 +14,7 @@ export function Card({ children, className = "", elevated = false }: CardProps) 
         backgroundColor: bg,
         border: "1px solid var(--border)",
         borderRadius: "8px",
-        padding: "16px",
+        padding: "var(--card-padding, 16px)",
       }}
       className={className}
     >

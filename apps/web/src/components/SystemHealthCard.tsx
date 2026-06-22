@@ -22,7 +22,7 @@ export function SystemHealthCard({ data }: { data: HealthItem[] }) {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "10px",
+                gap: "8px",
                 padding: "8px",
                 borderRadius: "5px",
                 backgroundColor: "var(--surface)",
@@ -44,11 +44,16 @@ export function SystemHealthCard({ data }: { data: HealthItem[] }) {
                   fontSize: "12px",
                   fontWeight: 600,
                   color: "var(--text-primary)",
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                 }}
               >
                 {item.label}
               </span>
               <span
+                className="health-detail"
                 style={{
                   fontSize: "11px",
                   color: "var(--text-secondary)",
@@ -57,6 +62,7 @@ export function SystemHealthCard({ data }: { data: HealthItem[] }) {
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
+                  flexShrink: 1,
                 }}
                 title={item.detail}
               >
@@ -70,6 +76,7 @@ export function SystemHealthCard({ data }: { data: HealthItem[] }) {
                   fontFamily: "monospace",
                   minWidth: "28px",
                   textAlign: "right",
+                  flexShrink: 0,
                 }}
               >
                 {statusLabels[item.status]}

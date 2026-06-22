@@ -18,55 +18,17 @@ interface SummaryItemProps {
   value: string;
   sub?: string;
   subColor?: string;
-  mono?: boolean;
 }
 
-function SummaryItem({ label, value, sub, subColor, mono }: SummaryItemProps) {
+function SummaryItem({ label, value, sub, subColor }: SummaryItemProps) {
   return (
-    <div
-      style={{
-        backgroundColor: "var(--card)",
-        border: "1px solid var(--border)",
-        borderRadius: "6px",
-        padding: "12px 16px",
-        flexShrink: 0,
-        minWidth: "148px",
-      }}
-    >
-      <div
-        style={{
-          fontSize: "10px",
-          fontWeight: 600,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          color: "var(--text-muted)",
-          marginBottom: "6px",
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: "20px",
-          fontWeight: 700,
-          color: "var(--text-primary)",
-          fontFamily: mono ? "monospace" : undefined,
-          fontVariantNumeric: mono ? "tabular-nums" : undefined,
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        }}
-      >
-        {value}
-      </div>
+    <div className="summary-item">
+      <div className="summary-item-label">{label}</div>
+      <div className="summary-item-value">{value}</div>
       {sub && (
         <div
-          style={{
-            fontSize: "12px",
-            color: subColor ?? "var(--text-muted)",
-            marginTop: "2px",
-            fontFamily: "monospace",
-          }}
+          className="summary-item-sub"
+          style={subColor ? { color: subColor } : undefined}
         >
           {sub}
         </div>
@@ -98,27 +60,19 @@ export function TradingSummaryRow({
       : "awaiting snapshot";
 
   return (
-    <div
-      style={{
-        display: "flex",
-        gap: "10px",
-        padding: "16px 24px",
-        overflowX: "auto",
-      }}
-    >
+    <div className="summary-row">
       <SummaryItem
         label="Portfolio Value"
         value={portfolioUsd !== null ? fmtUsd(portfolioUsd) : "—"}
         sub={portfolioSub}
-        mono
       />
       <SummaryItem
         label="PnL"
         value={
           pnlData !== null
-            ? (pnlData.totalUsd >= 0
-                ? `+${fmtUsd(pnlData.totalUsd)}`
-                : fmtUsd(pnlData.totalUsd))
+            ? pnlData.totalUsd >= 0
+              ? `+${fmtUsd(pnlData.totalUsd)}`
+              : fmtUsd(pnlData.totalUsd)
             : "—"
         }
         sub={
@@ -127,7 +81,6 @@ export function TradingSummaryRow({
             : "awaiting first live cycle"
         }
         subColor={pnlData !== null ? pctColor(pnlData.totalUsd) : undefined}
-        mono
       />
       <SummaryItem
         label="Volatile Exposure"
@@ -137,13 +90,11 @@ export function TradingSummaryRow({
             ? `${exposureData.stablePct.toFixed(1)}% stable · ${exposureData.gasPct.toFixed(1)}% gas`
             : "awaiting snapshot"
         }
-        mono
       />
       <SummaryItem
         label="Latest Swap"
         value={latestSwap ? `${latestSwap.fromAsset} → ${latestSwap.toAsset}` : "—"}
         sub={latestSwap ? fmtUsd(latestSwap.valueUsd) : "no live trades yet"}
-        mono
       />
       <SummaryItem
         label="Current Drawdown"
@@ -156,7 +107,6 @@ export function TradingSummaryRow({
             ? "var(--amber)"
             : "var(--text-muted)"
         }
-        mono
       />
     </div>
   );
